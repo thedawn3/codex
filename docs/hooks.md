@@ -102,10 +102,14 @@ or:
 
 `ok: false` is treated as a blocking decision (for blockable events).
 
+If a prompt hook times out, the request fails, or the response is not valid JSON, Codex records the error and continues (non-blocking).
+
 ### Agent hooks (`type: agent`)
 
 Agent hooks spawn a verifier subagent that can use tools (Read/Grep/Glob/etc) and must return a
 final JSON-only message with the same `{ok, reason}` shape as prompt hooks.
+
+If an agent hook times out, fails to spawn, or returns invalid JSON, Codex records the error and continues (non-blocking).
 
 ## Matchers
 
@@ -220,7 +224,8 @@ Output precedence when multiple keys are present:
 - Permission decisions prefer `hookSpecificOutput.permissionDecision` over top-level `permissionDecision`.
 - `continue=false` takes precedence over any decision fields.
 - Block reason:
-  - For `user_prompt_submit`, `stop`, `subagent_stop`, `config_change`: `reason` → `stopReason` → fallback.
+  - If blocked by `continue=false`: `stopReason` → `reason` → fallback.
+  - For `user_prompt_submit`, `stop`, `subagent_stop`, `config_change` (decision-based blocking): `reason` → `stopReason` → fallback.
   - For `pre_tool_use`:
     - If blocked by `decision`: `reason` → `stopReason` → `hookSpecificOutput.permissionDecisionReason` → fallback.
     - If blocked by `permissionDecision`: `hookSpecificOutput.permissionDecisionReason` → `permissionDecisionReason` → `reason` → `stopReason` → fallback.
