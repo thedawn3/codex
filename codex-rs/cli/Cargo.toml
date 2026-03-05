@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+axum = { workspace = true, default-features = false, features = ["http1", "json", "tokio"] }
 clap = { workspace = true, features = ["derive"] }
 clap_complete = { workspace = true }
 codex-app-server = { workspace = true }
@@ -40,13 +41,17 @@ codex-serve = { workspace = true }
 codex-stdio-to-uds = { workspace = true }
 codex-tui = { workspace = true }
 libc = { workspace = true }
+hmac = "0.12.1"
 owo-colors = { workspace = true }
 regex-lite = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 supports-color = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
+    "io-util",
     "macros",
     "process",
     "rt-multi-thread",
