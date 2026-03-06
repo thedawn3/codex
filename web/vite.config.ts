@@ -34,6 +34,33 @@ export default defineConfig({
     },
     build: {
         outDir: 'dist',
-        emptyOutDir: true
+        emptyOutDir: true,
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (!id.includes('node_modules')) {
+                        return undefined
+                    }
+                    if (id.includes('/@xterm/')) {
+                        return 'terminal-vendor'
+                    }
+                    if (
+                        id.includes('/shiki/')
+                        || id.includes('/remark-gfm/')
+                        || id.includes('/hast-util-to-jsx-runtime/')
+                        || id.includes('/@assistant-ui/react-markdown/')
+                    ) {
+                        return 'markdown-vendor'
+                    }
+                    if (id.includes('/@elevenlabs/')) {
+                        return 'voice-vendor'
+                    }
+                    if (id.includes('/@assistant-ui/react/')) {
+                        return 'assistant-ui-vendor'
+                    }
+                    return undefined
+                }
+            }
+        }
     }
 })

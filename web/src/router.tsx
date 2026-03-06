@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { Suspense, lazy, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -12,9 +12,7 @@ import {
     useParams,
 } from '@tanstack/react-router'
 import { App } from '@/App'
-import { SessionChat } from '@/components/SessionChat'
 import { SessionList } from '@/components/SessionList'
-import { NewSession } from '@/components/NewSession'
 import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
@@ -31,10 +29,13 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 import { getComposerAutocompleteSuggestions } from '@/lib/autocomplete'
-import FilesPage from '@/routes/sessions/files'
-import FilePage from '@/routes/sessions/file'
-import TerminalPage from '@/routes/sessions/terminal'
-import SettingsPage from '@/routes/settings'
+
+const SessionChat = lazy(() => import('@/components/SessionChat').then((module) => ({ default: module.SessionChat })))
+const NewSession = lazy(() => import('@/components/NewSession').then((module) => ({ default: module.NewSession })))
+const FilesPage = lazy(() => import('@/routes/sessions/files'))
+const FilePage = lazy(() => import('@/routes/sessions/file'))
+const TerminalPage = lazy(() => import('@/routes/sessions/terminal'))
+const SettingsPage = lazy(() => import('@/routes/settings'))
 
 function BackIcon(props: { className?: string }) {
     return (
@@ -292,7 +293,8 @@ function SessionPage() {
     }
 
     return (
-        <SessionChat
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center p-4"><LoadingState label="Loading session…" className="text-sm" /></div>}>
+            <SessionChat
             api={api}
             session={session}
             messages={messages}
@@ -312,6 +314,7 @@ function SessionPage() {
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
         />
+        </Suspense>
     )
 }
 
@@ -369,13 +372,15 @@ function NewSessionPage() {
                 </div>
             ) : null}
 
-            <NewSession
-                api={api}
-                machines={machines}
-                isLoading={machinesLoading}
-                onCancel={handleCancel}
-                onSuccess={handleSuccess}
-            />
+            <Suspense fallback={<div className="p-3"><LoadingState label="Loading form…" className="text-sm" /></div>}>
+                <NewSession
+                    api={api}
+                    machines={machines}
+                    isLoading={machinesLoading}
+                    onCancel={handleCancel}
+                    onSuccess={handleSuccess}
+                />
+            </Suspense>
         </div>
     )
 }
@@ -421,13 +426,13 @@ const sessionFilesRoute = createRoute({
 
         return tab ? { tab } : {}
     },
-    component: FilesPage,
+    component: () => <Suspense fallback={<div className="flex-1 flex items-center justify-center p-4"><LoadingState label="Loading files…" className="text-sm" /></div>}><FilesPage /></Suspense>,
 })
 
 const sessionTerminalRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'terminal',
-    component: TerminalPage,
+    component: () => <Suspense fallback={<div className="flex-1 flex items-center justify-center p-4"><LoadingState label="Loading terminal…" className="text-sm" /></div>}><TerminalPage /></Suspense>,
 })
 
 type SessionFileSearch = {
@@ -463,7 +468,7 @@ const sessionFileRoute = createRoute({
         }
         return result
     },
-    component: FilePage,
+    component: () => <Suspense fallback={<div className="flex-1 flex items-center justify-center p-4"><LoadingState label="Loading file…" className="text-sm" /></div>}><FilePage /></Suspense>,
 })
 
 const newSessionRoute = createRoute({
@@ -475,7 +480,7 @@ const newSessionRoute = createRoute({
 const settingsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/settings',
-    component: SettingsPage,
+    component: () => <Suspense fallback={<div className="flex-1 flex items-center justify-center p-4"><LoadingState label="Loading settings…" className="text-sm" /></div>}><SettingsPage /></Suspense>,
 })
 
 export const routeTree = rootRoute.addChildren([

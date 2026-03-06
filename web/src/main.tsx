@@ -1,7 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import './index.css'
 import { initializeFontScale } from '@/hooks/useFontScale'
@@ -9,6 +8,10 @@ import { getTelegramWebApp, isTelegramEnvironment, loadTelegramSdk } from './hoo
 import { queryClient } from './lib/query-client'
 import { createAppRouter } from './router'
 import { I18nProvider } from './lib/i18n-context'
+
+const ReactQueryDevtools = React.lazy(() =>
+    import('@tanstack/react-query-devtools').then((module) => ({ default: module.ReactQueryDevtools }))
+)
 
 function getStartParam(): string | null {
     const query = new URLSearchParams(window.location.search)
@@ -50,7 +53,11 @@ async function bootstrap() {
             <I18nProvider>
                 <QueryClientProvider client={queryClient}>
                     <RouterProvider router={router} />
-                    {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
+                    {import.meta.env.DEV ? (
+                        <React.Suspense fallback={null}>
+                            <ReactQueryDevtools initialIsOpen={false} />
+                        </React.Suspense>
+                    ) : null}
                 </QueryClientProvider>
             </I18nProvider>
         </React.StrictMode>
