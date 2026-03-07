@@ -694,14 +694,26 @@ mod tests {
         let bundle = WEB_ASSETS
             .get_file(bundle_path)
             .unwrap_or_else(|| panic!("embedded serve assets include {bundle_path}"));
-        let bundle_js = std::str::from_utf8(bundle.contents()).expect("main JS bundle is utf-8");
+        let _bundle_js = std::str::from_utf8(bundle.contents()).expect("main JS bundle is utf-8");
+
+        let bundled_js_assets = WEB_ASSETS
+            .get_dir("assets")
+            .expect("embedded serve assets include assets directory")
+            .files()
+            .filter(|file| file.path().extension().is_some_and(|ext| ext == "js"))
+            .map(|file| std::str::from_utf8(file.contents()).expect("embedded JS bundle is utf-8"))
+            .collect::<Vec<_>>();
 
         assert!(
-            bundle_js.contains("reasoningEffort"),
+            bundled_js_assets
+                .iter()
+                .any(|bundle_js| bundle_js.contains("reasoningEffort")),
             "embedded Web UI bundle missing reasoningEffort (run `just write-serve-web-assets`)"
         );
         assert!(
-            bundle_js.contains("spawn_team"),
+            bundled_js_assets
+                .iter()
+                .any(|bundle_js| bundle_js.contains("spawn_team")),
             "embedded Web UI bundle missing agent teams tool support (run `just write-serve-web-assets`)"
         );
     }
@@ -794,6 +806,7 @@ mod tests {
             network: None,
             model: "gpt-5.2".to_string(),
             personality: None,
+            trace_id: None,
             collaboration_mode: Some(CollaborationMode {
                 mode: ModeKind::Default,
                 settings: Settings {
@@ -2835,12 +2848,22 @@ async fn terminal_ws_loop(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let args: Vec<String> = Vec::new();
     let env: HashMap<String, String> = std::env::vars().collect();
-    let spawned = match codex_utils_pty::spawn_pty_process(&shell, &args, &cwd, &env, &None).await {
+    let spawned = match codex_utils_pty::spawn_pty_process(
+        &shell,
+        &args,
+        &cwd,
+        &env,
+        &None,
+        codex_utils_pty::TerminalSize::default(),
+    )
+    .await
+    {
         Ok(spawned) => spawned,
         Err(_) => return,
     };
     let session = spawned.session;
-    let mut output_rx = spawned.output_rx;
+    let mut output_rx =
+        codex_utils_pty::combine_output_receivers(spawned.stdout_rx, spawned.stderr_rx);
     let mut exit_rx = spawned.exit_rx;
 
     loop {
