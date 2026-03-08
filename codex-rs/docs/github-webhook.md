@@ -33,6 +33,13 @@
 
 默认命令前缀是 `/codex`。如果没有 `[github_webhook]` 配置，事件面保持旧行为，只启用评论 / review 三类事件。
 
+可见反馈：
+
+- `issue_comment` / `pull_request_review_comment` 在请求入队后会优先给触发评论加 `eyes` reaction
+- 其他可回复场景会尽快发一条短评论 / review，表示已收到并开始处理
+- 如果后台执行失败，或在入队前遇到 `busy` / delivery claim / permission check 内部错误，Codex 会尽量回贴失败通知
+- `push` 没有回复目标，所以不会发 ack 或失败通知
+
 ## 配置方式
 
 非敏感默认值可以写进 `config.toml`：
@@ -134,10 +141,11 @@ GitHub App 的 webhook URL 也指向同一个公网入口，例如：
 3. 检查事件是否启用
 4. 校验 repo allowlist（如果配置了 `allow_repos` / `--allow-repo`）
 5. 校验 sender 是否满足最小仓库权限要求
-6. clone / fetch 仓库并准备 issue / pull / push worktree
-7. 拉取 GitHub 上下文并写入 `.codex_github_context.md`
-8. 在对应 worktree 里运行 Codex
-9. 将结果回贴到 issue / PR 评论；`push` 事件只执行，不主动回帖
+6. 认领 delivery；对可回复目标先发送 ack（reaction 或短评论 / review）
+7. clone / fetch 仓库并准备 issue / pull / push worktree
+8. 拉取 GitHub 上下文并写入 `.codex_github_context.md`
+9. 在对应 worktree 里运行 Codex
+10. 将结果回贴到 issue / PR 评论；`push` 事件只执行，不主动回帖
 
 ## 清理与存储
 

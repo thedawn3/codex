@@ -210,6 +210,7 @@ async fn list_skills_includes_system_cache_entries() -> Result<()> {
         .map(|entry| (entry.skills.clone(), entry.errors.clone()))
         .unwrap_or_default();
 
+    let expected_path_suffix = format!("/skills/.system/{SYSTEM_SKILL_NAME}/SKILL.md");
     let skill = skills
         .iter()
         .find(|skill| {
@@ -218,7 +219,6 @@ async fn list_skills_includes_system_cache_entries() -> Result<()> {
         })
         .expect("expected system skill to be present");
     let path_str = skill.path.to_string_lossy().replace('\\', "/");
-    let expected_path_suffix = format!("/skills/.system/{SYSTEM_SKILL_NAME}/SKILL.md");
     assert!(
         path_str.ends_with(&expected_path_suffix),
         "unexpected skill path: {path_str}"

@@ -50,6 +50,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 
+#[cfg(test)]
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8787";
 const DEFAULT_WEBHOOK_SECRET_ENV: &str = "GITHUB_WEBHOOK_SECRET";
 const DEFAULT_GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
@@ -73,6 +74,8 @@ const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const GITHUB_APP_JWT_BACKDATE_SECS: u64 = 60;
 const GITHUB_APP_JWT_LIFETIME_SECS: u64 = 9 * 60;
+const ACKNOWLEDGMENT_MESSAGE: &str = "codex github received this request and is working on it.";
+const ACKNOWLEDGMENT_REACTION: &str = "eyes";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -429,6 +432,7 @@ struct WorkItem {
     display_target: String,
     push_ref: Option<String>,
     push_after: Option<String>,
+    ack_target: AckTarget,
     response_target: ResponseTarget,
 }
 
@@ -438,6 +442,13 @@ enum ResponseTarget {
     IssueComment { issue_number: u64 },
     ReviewCommentReply { comment_id: u64 },
     PullRequestReview { pull_number: u64 },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AckTarget {
+    None,
+    IssueComment { comment_id: u64 },
+    ReviewComment { comment_id: u64 },
 }
 
 #[derive(Debug)]
@@ -650,6 +661,36 @@ impl GithubApi {
             self.base_url
         );
         self.post_json(url, serde_json::json!({ "body": body }))
+            .await
+    }
+
+    async fn post_issue_comment_reaction(
+        &self,
+        owner: &str,
+        repo: &str,
+        comment_id: u64,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+            self.base_url
+        );
+        self.post_json(url, serde_json::json!({ "content": content }))
+            .await
+    }
+
+    async fn post_review_comment_reaction(
+        &self,
+        owner: &str,
+        repo: &str,
+        comment_id: u64,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+            self.base_url
+        );
+        self.post_json(url, serde_json::json!({ "content": content }))
             .await
     }
 
@@ -1261,7 +1302,14 @@ async fn handle_webhook(
 
     let permit = match state.concurrency_limit.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "busy").into_response(),
+        Err(_) => {
+            if let Err(err) =
+                post_failure(&state, &work_item, "codex github is busy; try again later").await
+            {
+                eprintln!("failed to post busy notification: {err:#}");
+            }
+            return (StatusCode::SERVICE_UNAVAILABLE, "busy").into_response();
+        }
     };
 
     match sender_allowed(&state, &work_item).await {
@@ -1269,6 +1317,15 @@ async fn handle_webhook(
         Ok(false) => return (StatusCode::ACCEPTED, "ignored").into_response(),
         Err(err) => {
             eprintln!("sender permission check failed: {err:#}");
+            if let Err(post_err) = post_failure(
+                &state,
+                &work_item,
+                "codex github could not verify sender permissions",
+            )
+            .await
+            {
+                eprintln!("failed to post permission-check notification: {post_err:#}");
+            }
             return (StatusCode::INTERNAL_SERVER_ERROR, "permission check failed").into_response();
         }
     }
@@ -1278,12 +1335,25 @@ async fn handle_webhook(
         Ok(true) => {}
         Err(err) => {
             eprintln!("delivery claim failed: {err:#}");
+            if let Err(post_err) = post_failure(
+                &state,
+                &work_item,
+                "codex github could not claim this delivery",
+            )
+            .await
+            {
+                eprintln!("failed to post delivery-claim notification: {post_err:#}");
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to claim delivery",
             )
                 .into_response();
         }
+    }
+
+    if let Err(err) = post_ack(&state, &work_item).await {
+        eprintln!("failed to post ack: {err:#}");
     }
 
     tokio::spawn(process_work_item(state, work_item, permit));
@@ -1563,6 +1633,17 @@ fn display_target_for_push(ref_name: &str, after: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ParseContext<'a> {
+    owner: &'a str,
+    repo: &'a str,
+    repo_full_name: &'a str,
+    sender_login: &'a str,
+    source: WebhookSource,
+    installation_id: Option<u64>,
+    command_prefix: &'a str,
+}
+
 fn parse_work_item_with_source(
     event: GithubEvent,
     source: WebhookSource,
@@ -1576,83 +1657,27 @@ fn parse_work_item_with_source(
         .context("missing repository.full_name")?;
     let (owner, repo) = split_owner_repo(repo_full_name)?;
     let sender_login = extract_sender_login(payload)?;
-    let installation_id = installation_id_from_payload(payload);
+    let ctx = ParseContext {
+        owner,
+        repo,
+        repo_full_name,
+        sender_login,
+        source,
+        installation_id: installation_id_from_payload(payload),
+        command_prefix,
+    };
 
     match event {
-        GithubEvent::IssueComment => parse_issue_comment(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::Issues => parse_issue_event(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::PullRequest => parse_pull_request_event(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::PullRequestReviewComment => parse_review_comment(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::PullRequestReview => parse_review(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::Push => parse_push_event(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            source,
-            installation_id,
-            payload,
-            command_prefix,
-        ),
+        GithubEvent::IssueComment => parse_issue_comment(ctx, payload),
+        GithubEvent::Issues => parse_issue_event(ctx, payload),
+        GithubEvent::PullRequest => parse_pull_request_event(ctx, payload),
+        GithubEvent::PullRequestReviewComment => parse_review_comment(ctx, payload),
+        GithubEvent::PullRequestReview => parse_review(ctx, payload),
+        GithubEvent::Push => parse_push_event(ctx, payload),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_issue_comment(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_issue_comment(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     let action = payload
         .get("action")
         .and_then(Value::as_str)
@@ -1671,7 +1696,7 @@ fn parse_issue_comment(
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_command(body, command_prefix) else {
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
         return Ok(None);
     };
 
@@ -1683,13 +1708,13 @@ fn parse_issue_comment(
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: work_kind,
             number: issue_number,
         },
@@ -1697,21 +1722,17 @@ fn parse_issue_comment(
         display_target: format!("#{issue_number}"),
         push_ref: None,
         push_after: None,
+        ack_target: comment
+            .get("id")
+            .and_then(Value::as_u64)
+            .map_or(AckTarget::None, |comment_id| AckTarget::IssueComment {
+                comment_id,
+            }),
         response_target: ResponseTarget::IssueComment { issue_number },
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_issue_event(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_issue_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     let action = payload
         .get("action")
         .and_then(Value::as_str)
@@ -1728,18 +1749,18 @@ fn parse_issue_event(
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_command(body, command_prefix) else {
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
         return Ok(None);
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: WorkKind::Issue,
             number: issue_number,
         },
@@ -1747,21 +1768,12 @@ fn parse_issue_event(
         display_target: format!("#{issue_number}"),
         push_ref: None,
         push_after: None,
+        ack_target: AckTarget::None,
         response_target: ResponseTarget::IssueComment { issue_number },
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_pull_request_event(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_pull_request_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     let action = payload
         .get("action")
         .and_then(Value::as_str)
@@ -1781,18 +1793,18 @@ fn parse_pull_request_event(
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_command(body, command_prefix) else {
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
         return Ok(None);
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: WorkKind::Pull,
             number: pull_number,
         },
@@ -1800,23 +1812,14 @@ fn parse_pull_request_event(
         display_target: format!("#{pull_number}"),
         push_ref: None,
         push_after: None,
+        ack_target: AckTarget::None,
         response_target: ResponseTarget::IssueComment {
             issue_number: pull_number,
         },
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_review_comment(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_review_comment(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     let action = payload
         .get("action")
         .and_then(Value::as_str)
@@ -1839,18 +1842,18 @@ fn parse_review_comment(
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_command(body, command_prefix) else {
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
         return Ok(None);
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: WorkKind::Pull,
             number: pull_number,
         },
@@ -1858,21 +1861,12 @@ fn parse_review_comment(
         display_target: format!("#{pull_number}"),
         push_ref: None,
         push_after: None,
+        ack_target: AckTarget::ReviewComment { comment_id },
         response_target: ResponseTarget::ReviewCommentReply { comment_id },
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_review(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_review(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     let action = payload
         .get("action")
         .and_then(Value::as_str)
@@ -1891,18 +1885,18 @@ fn parse_review(
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_review_commands(body, command_prefix) else {
+    let Some(prompt) = extract_review_commands(body, ctx.command_prefix) else {
         return Ok(None);
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: WorkKind::Pull,
             number: pull_number,
         },
@@ -1910,21 +1904,12 @@ fn parse_review(
         display_target: format!("#{pull_number}"),
         push_ref: None,
         push_after: None,
+        ack_target: AckTarget::None,
         response_target: ResponseTarget::PullRequestReview { pull_number },
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_push_event(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    source: WebhookSource,
-    installation_id: Option<u64>,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
+fn parse_push_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
     if payload.get("deleted").and_then(Value::as_bool) == Some(true) {
         return Ok(None);
     }
@@ -1951,18 +1936,18 @@ fn parse_push_event(
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(prompt) = extract_command(message, command_prefix) else {
+    let Some(prompt) = extract_command(message, ctx.command_prefix) else {
         return Ok(None);
     };
 
     Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        source,
-        installation_id,
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
         work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
             kind: WorkKind::Push,
             number: hash_work_number(ref_name),
         },
@@ -1970,6 +1955,7 @@ fn parse_push_event(
         display_target: display_target_for_push(branch_name, after),
         push_ref: Some(branch_name.to_string()),
         push_after: Some(after.to_string()),
+        ack_target: AckTarget::None,
         response_target: ResponseTarget::None,
     }))
 }
@@ -2370,6 +2356,7 @@ async fn ensure_worktree(
         display_target: format!("#{}", key.number),
         push_ref: None,
         push_after: None,
+        ack_target: AckTarget::None,
         response_target: ResponseTarget::IssueComment {
             issue_number: key.number,
         },
@@ -3097,6 +3084,41 @@ async fn post_success_with_github(
         }
     }
     Ok(())
+}
+
+async fn post_ack_with_github(github: &GithubApi, item: &WorkItem) -> Result<()> {
+    let owner = item.work.owner.as_str();
+    let repo = item.work.repo.as_str();
+    match item.ack_target {
+        AckTarget::IssueComment { comment_id } => {
+            if github
+                .post_issue_comment_reaction(owner, repo, comment_id, ACKNOWLEDGMENT_REACTION)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        AckTarget::ReviewComment { comment_id } => {
+            if github
+                .post_review_comment_reaction(owner, repo, comment_id, ACKNOWLEDGMENT_REACTION)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        AckTarget::None => {}
+    }
+    post_success_with_github(github, item, ACKNOWLEDGMENT_MESSAGE).await
+}
+
+async fn post_ack(state: &AppState, item: &WorkItem) -> Result<()> {
+    if matches!(item.response_target, ResponseTarget::None) {
+        return Ok(());
+    }
+    let access = resolve_github_access(state, item).await?;
+    post_ack_with_github(&access.github, item).await
 }
 
 async fn post_failure(state: &AppState, item: &WorkItem, err: &str) -> Result<()> {
@@ -4190,6 +4212,7 @@ mod tests {
             display_target: "#1".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -4290,6 +4313,7 @@ gM6+LiULCYzYqcuiuKsJk6lL
             display_target: "#1".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5174,9 +5198,29 @@ push = true
 
     #[tokio::test]
     async fn handle_webhook_returns_busy_before_permission_check() {
+        let posted_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new().route(
+            "/repos/o/r/issues/1/comments",
+            post({
+                let posted_body = Arc::clone(&posted_body);
+                move |axum::Json(v): axum::Json<Value>| {
+                    let posted_body = Arc::clone(&posted_body);
+                    async move {
+                        *posted_body.lock().await = v
+                            .get("body")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        StatusCode::CREATED
+                    }
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
         let github =
-            GithubApi::new_with_base_url("t".to_string(), "http://example.invalid".to_string())
-                .unwrap();
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
@@ -5218,6 +5262,9 @@ push = true
             .await
             .into_response();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(posted_body.lock().await.contains("busy"));
+
+        server.abort();
     }
 
     #[tokio::test]
@@ -5319,6 +5366,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5379,6 +5427,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6203,6 +6252,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
         post_success(&state, &issue_item, "m1").await.unwrap();
@@ -6223,6 +6273,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::ReviewCommentReply { comment_id: 123 },
         };
         post_success(&state, &reply_item, "m2").await.unwrap();
@@ -6243,6 +6294,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::PullRequestReview { pull_number: 7 },
         };
         post_success(&state, &review_item, "m3").await.unwrap();
@@ -6335,6 +6387,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6346,6 +6399,176 @@ push = true
             .unwrap();
         process_work_item(state, item, permit).await;
         assert!(posted_body.lock().await.contains("codex github failed"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn post_ack_reacts_to_issue_comment_when_available() {
+        let reaction_calls = Arc::new(AtomicUsize::new(0));
+        let comment_calls = Arc::new(AtomicUsize::new(0));
+        let reaction_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new()
+            .route(
+                "/repos/o/r/issues/comments/99/reactions",
+                post({
+                    let reaction_calls = Arc::clone(&reaction_calls);
+                    let reaction_body = Arc::clone(&reaction_body);
+                    move |axum::Json(v): axum::Json<Value>| {
+                        let reaction_calls = Arc::clone(&reaction_calls);
+                        let reaction_body = Arc::clone(&reaction_body);
+                        async move {
+                            reaction_calls.fetch_add(1, Ordering::SeqCst);
+                            *reaction_body.lock().await = v
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/repos/o/r/issues/1/comments",
+                post({
+                    let comment_calls = Arc::clone(&comment_calls);
+                    move || {
+                        let comment_calls = Arc::clone(&comment_calls);
+                        async move {
+                            comment_calls.fetch_add(1, Ordering::SeqCst);
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
+
+        let github =
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::IssueComment { comment_id: 99 },
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        post_ack(&state, &item).await.unwrap();
+        assert_eq!(reaction_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(comment_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(reaction_body.lock().await.as_str(), ACKNOWLEDGMENT_REACTION);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn post_ack_falls_back_to_comment_when_reaction_fails() {
+        let comment_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new()
+            .route(
+                "/repos/o/r/issues/comments/99/reactions",
+                post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "no") }),
+            )
+            .route(
+                "/repos/o/r/issues/1/comments",
+                post({
+                    let comment_body = Arc::clone(&comment_body);
+                    move |axum::Json(v): axum::Json<Value>| {
+                        let comment_body = Arc::clone(&comment_body);
+                        async move {
+                            *comment_body.lock().await = v
+                                .get("body")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
+
+        let github =
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::IssueComment { comment_id: 99 },
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        post_ack(&state, &item).await.unwrap();
+        assert_eq!(comment_body.lock().await.as_str(), ACKNOWLEDGMENT_MESSAGE);
 
         server.abort();
     }
@@ -6409,6 +6632,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
         assert!(post_success(&state, &issue_item, "m1").await.is_err());
@@ -6428,6 +6652,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::ReviewCommentReply { comment_id: 123 },
         };
         assert!(post_success(&state, &reply_item, "m2").await.is_err());
@@ -6447,6 +6672,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::PullRequestReview { pull_number: 7 },
         };
         assert!(post_success(&state, &review_item, "m3").await.is_err());
@@ -6539,6 +6765,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6645,6 +6872,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6725,6 +6953,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6846,6 +7075,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6917,6 +7147,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -6975,6 +7206,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -7033,6 +7265,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -7097,6 +7330,7 @@ push = true
             display_target: "test".to_string(),
             push_ref: None,
             push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -7111,9 +7345,11 @@ push = true
     #[tokio::test]
     async fn handle_webhook_processes_issue_comment_end_to_end() {
         let post_calls = Arc::new(AtomicUsize::new(0));
+        let reaction_calls = Arc::new(AtomicUsize::new(0));
         let posted_body = Arc::new(tokio::sync::Mutex::new(String::new()));
         let app = {
             let post_calls = Arc::clone(&post_calls);
+            let reaction_calls = Arc::clone(&reaction_calls);
             let posted_body = Arc::clone(&posted_body);
             Router::new()
                 .route(
@@ -7156,6 +7392,20 @@ push = true
                             }
                         },
                     ),
+                )
+                .route(
+                    "/repos/o/r/issues/comments/99/reactions",
+                    post(move |axum::Json(v): axum::Json<Value>| {
+                        let reaction_calls = Arc::clone(&reaction_calls);
+                        async move {
+                            reaction_calls.fetch_add(1, Ordering::SeqCst);
+                            assert_eq!(
+                                v.get("content").and_then(Value::as_str),
+                                Some(ACKNOWLEDGMENT_REACTION)
+                            );
+                            StatusCode::CREATED
+                        }
+                    }),
                 )
         };
 
@@ -7216,7 +7466,7 @@ push = true
             "repository": { "full_name": "o/r" },
             "sender": { "login": "u" },
             "issue": { "number": 1 },
-            "comment": { "body": "/codex do the thing" }
+            "comment": { "id": 99, "body": "/codex do the thing" }
         });
         let body = serde_json::to_vec(&payload).unwrap();
         let header = signature_header(b"sekrit", &body);
@@ -7253,6 +7503,7 @@ push = true
         .unwrap();
 
         assert_eq!(post_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(reaction_calls.load(Ordering::SeqCst), 1);
         assert_eq!(posted_body.lock().await.as_str(), "ok");
 
         let context = tokio::fs::read_to_string(work_dir.join(GITHUB_CONTEXT_FILENAME))
