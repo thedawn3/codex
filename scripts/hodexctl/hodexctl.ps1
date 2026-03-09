@@ -2351,17 +2351,17 @@ function Resolve-SourceRepoInput {
 function Parse-SourceRemoteIdentity {
     param([string]$RemoteInput)
 
-    $host = "github.com"
+    $remoteHost = "github.com"
     $pathPart = $RemoteInput
     if ($RemoteInput -match '://') {
         $stripped = ($RemoteInput -replace '^[^:]+://', '') -replace '^[^@]+@', ''
-        $host, $pathPart = $stripped.Split('/', 2)
+        $remoteHost, $pathPart = $stripped.Split('/', 2)
     } elseif ($RemoteInput -match '^git@') {
         $stripped = ($RemoteInput -replace '^git@', '')
-        $host, $pathPart = $stripped.Split(':', 2)
+        $remoteHost, $pathPart = $stripped.Split(':', 2)
     }
     $pathPart = $pathPart.TrimStart('/') -replace '\.git$', ''
-    return [pscustomobject]@{ host = $host; path = $pathPart }
+    return [pscustomobject]@{ host = $remoteHost; path = $pathPart }
 }
 
 function Get-DefaultSourceCheckoutDir {
@@ -3449,7 +3449,7 @@ function Detect-SourceToolchain {
         }
     }
     if (-not (Test-Command "cl")) {
-        $requiredMissing.Add("msvc-build-tools")
+        $optionalMissing.Add("msvc-build-tools")
     }
     if (-not (Test-Command "just")) {
         $optionalMissing.Add("just")
@@ -3471,11 +3471,11 @@ function Show-SourceToolchainReport {
     param([object]$Report)
 
     Write-Host "源码模式工具链检查:"
-    foreach ($item in @("git", "rustup", "cargo", "rustc", "msvc-build-tools")) {
+    foreach ($item in @("git", "rustup", "cargo", "rustc")) {
         $status = if (@($Report.required_missing) -contains $item) { "缺失" } else { "已安装" }
         Write-Host "  - ${item}: $status"
     }
-    foreach ($item in @("just", "node", "npm")) {
+    foreach ($item in @("msvc-build-tools", "just", "node", "npm")) {
         $status = if (@($Report.optional_missing) -contains $item) { "缺失" } else { "已安装" }
         Write-Host "  - ${item}: $status"
     }
@@ -3524,12 +3524,15 @@ function Auto-InstallSourceToolchain {
 function Ensure-SourceToolchainReady {
     $report = Detect-SourceToolchain
     Show-SourceToolchainReport -Report $report
-    if (@($report.required_missing).Count -eq 0 -and @($report.optional_missing).Count -eq 0) {
+    if (@($report.required_missing).Count -eq 0) {
         return $report
     }
 
     if (Confirm-YesNo -Prompt "是否自动安装上述缺失工具？" -DefaultYes $true) {
-        Auto-InstallSourceToolchain -Report $report
+        Auto-InstallSourceToolchain -Report ([pscustomobject]@{
+            required_missing = @($report.required_missing)
+            optional_missing = @()
+        })
         $report = Detect-SourceToolchain
         Show-SourceToolchainReport -Report $report
     }
