@@ -873,6 +873,7 @@ async fn conversation_startup_context_is_truncated_and_sent_once_per_start() -> 
     let test = builder.build_with_websocket_server(&server).await?;
     seed_recent_thread(&test, &oversized_summary, "summary", "oversized").await?;
     fs::write(test.workspace_path("marker.txt"), "marker")?;
+    assert!(server.wait_for_handshakes(1, Duration::from_secs(2)).await);
 
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {
