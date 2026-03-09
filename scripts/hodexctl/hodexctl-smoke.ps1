@@ -68,12 +68,12 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_mess
 
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $stateDir = Join-Path $tempRoot "state"
-    $commandDir = Join-Path $tempRoot "commands"
+    $smokeStateDir = Join-Path $tempRoot "state"
+    $smokeCommandDir = Join-Path $tempRoot "commands"
     $releaseStateDir = Join-Path $tempRoot "release-state"
     $releaseCommandDir = Join-Path $tempRoot "release-commands"
     $sourceRepoDir = Join-Path $tempRoot "source-repo"
-    $sourceCheckoutDir = Join-Path $tempRoot "source-checkout"
+    $smokeSourceCheckoutDir = Join-Path $tempRoot "source-checkout"
     $summaryBin = Join-Path $tempRoot "summary-bin"
     $summaryArgs = Join-Path $tempRoot "summary-args.txt"
     $summaryPrompt = Join-Path $tempRoot "summary-prompt.txt"
@@ -172,9 +172,9 @@ try {
 
     if ($env:OS -eq "Windows_NT") {
         Write-Host "==> 检查未安装状态输出"
-        $statusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $stateDir 2>&1 | Out-String)
+        $statusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $smokeStateDir 2>&1 | Out-String)
         Assert-Contains -Text $statusOutput -Expected "正式版安装状态: 未安装"
-        Assert-Contains -Text $statusOutput -Expected ("状态目录: " + $stateDir)
+        Assert-Contains -Text $statusOutput -Expected ("状态目录: " + $smokeStateDir)
 
         Write-Host "==> 检查 release-only 安装与卸载清理"
         $assetsDir = Join-Path $tempRoot 'release-assets'
@@ -263,15 +263,15 @@ try {
         }
 
         Write-Host "==> 检查源码空状态输出"
-        $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -StateDir $stateDir 2>&1 | Out-String)
-        $sourceListOutput = (& $runner -NoProfile -File $controllerPath source list -StateDir $stateDir 2>&1 | Out-String)
+        $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -StateDir $smokeStateDir 2>&1 | Out-String)
+        $sourceListOutput = (& $runner -NoProfile -File $controllerPath source list -StateDir $smokeStateDir 2>&1 | Out-String)
         Assert-Contains -Text $sourceStatusOutput -Expected "未安装任何源码条目"
         Assert-Contains -Text $sourceListOutput -Expected "当前没有已记录的源码条目"
 
         Write-Host "==> 检查源码模式本地闭环同步"
         if ((Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -ErrorAction SilentlyContinue)) {
             New-Item -ItemType Directory -Path (Join-Path $sourceRepoDir "src") -Force | Out-Null
-            New-Item -ItemType Directory -Path $commandDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $smokeCommandDir -Force | Out-Null
 
             Set-Content -Path (Join-Path $sourceRepoDir "Cargo.toml") -Value @"
 [package]
@@ -296,16 +296,16 @@ fn main() {
             & git -C $sourceRepoDir commit -m "init smoke repo" | Out-Null
             & git -C $sourceRepoDir tag smoke-tag | Out-Null
 
-            $sourceInstallOutput = (& $runner -NoProfile -File $controllerPath source install -Yes -NoPathUpdate -StateDir $stateDir -CommandDir $commandDir -GitUrl $sourceRepoDir -Profile smoke-source -Ref main -CheckoutDir $sourceCheckoutDir 2>&1 | Out-String)
+            $sourceInstallOutput = (& $runner -NoProfile -File $controllerPath source install -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir -GitUrl $sourceRepoDir -Profile smoke-source -Ref main -CheckoutDir $smokeSourceCheckoutDir 2>&1 | Out-String)
             Assert-Contains -Text $sourceInstallOutput -Expected "结果摘要"
             Assert-Contains -Text $sourceInstallOutput -Expected "源码记录名: smoke-source"
-            if (!(Test-Path (Join-Path $sourceCheckoutDir ".git"))) { throw "源码 checkout 未生成" }
-            if (!(Test-Path (Join-Path $commandDir "hodexctl.cmd"))) { throw "hodexctl 包装器未生成" }
-            $checkoutHead = (& git -C $sourceCheckoutDir rev-parse HEAD | Out-String).Trim()
+            if (!(Test-Path (Join-Path $smokeSourceCheckoutDir ".git"))) { throw "源码 checkout 未生成" }
+            if (!(Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd"))) { throw "hodexctl 包装器未生成" }
+            $checkoutHead = (& git -C $smokeSourceCheckoutDir rev-parse HEAD | Out-String).Trim()
             $repoHead = (& git -C $sourceRepoDir rev-parse HEAD | Out-String).Trim()
             if ($checkoutHead -ne $repoHead) { throw "源码安装后 checkout HEAD 不一致" }
 
-            $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -Yes -NoPathUpdate -StateDir $stateDir -CommandDir $commandDir 2>&1 | Out-String)
+            $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
             Assert-Contains -Text $sourceStatusOutput -Expected "名称: smoke-source"
             Assert-Contains -Text $sourceStatusOutput -Expected "模式: 仅管理源码 checkout 与工具链，不生成源码命令入口"
 
@@ -317,9 +317,9 @@ fn main() {
             & git -C $sourceRepoDir add src/main.rs | Out-Null
             & git -C $sourceRepoDir commit -m "update smoke repo" | Out-Null
 
-            $sourceUpdateOutput = (& $runner -NoProfile -File $controllerPath source update -Yes -NoPathUpdate -StateDir $stateDir -CommandDir $commandDir 2>&1 | Out-String)
+            $sourceUpdateOutput = (& $runner -NoProfile -File $controllerPath source update -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
             Assert-Contains -Text $sourceUpdateOutput -Expected "更新源码"
-            $checkoutHead = (& git -C $sourceCheckoutDir rev-parse HEAD | Out-String).Trim()
+            $checkoutHead = (& git -C $smokeSourceCheckoutDir rev-parse HEAD | Out-String).Trim()
             $repoHead = (& git -C $sourceRepoDir rev-parse HEAD | Out-String).Trim()
             if ($checkoutHead -ne $repoHead) { throw "源码更新后 checkout HEAD 不一致" }
 
@@ -327,22 +327,22 @@ fn main() {
             $env:HODEXCTL_SKIP_MAIN = "1"
             . $controllerPath
             Remove-Item Env:\HODEXCTL_SKIP_MAIN -ErrorAction SilentlyContinue
-            $refCandidates = @(Get-SourceRefCandidates -RepoInput $sourceRepoDir -ProfileName "smoke-source" -DefaultRef "main" -CheckoutDir $sourceCheckoutDir)
+            $refCandidates = @(Get-SourceRefCandidates -RepoInput $sourceRepoDir -ProfileName "smoke-source" -DefaultRef "main" -CheckoutDir $smokeSourceCheckoutDir)
             if ($refCandidates -notcontains "feature-smoke-switch") { throw "真实 Git refs 未进入源码 ref 候选列表" }
             if ($refCandidates -contains "smoke-tag") { throw "branch 候选列表不应默认混入 tag" }
 
-            $sourceSwitchOutput = (& $runner -NoProfile -File $controllerPath source switch -Yes -NoPathUpdate -StateDir $stateDir -CommandDir $commandDir -Ref feature-smoke-switch 2>&1 | Out-String)
+            $sourceSwitchOutput = (& $runner -NoProfile -File $controllerPath source switch -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir -Ref feature-smoke-switch 2>&1 | Out-String)
             Assert-Contains -Text $sourceSwitchOutput -Expected "切换 ref 并同步源码"
-            $currentBranch = (& git -C $sourceCheckoutDir rev-parse --abbrev-ref HEAD | Out-String).Trim()
+            $currentBranch = (& git -C $smokeSourceCheckoutDir rev-parse --abbrev-ref HEAD | Out-String).Trim()
             if ($currentBranch -ne "feature-smoke-switch") { throw "源码切换 ref 后分支不正确" }
 
-            $sourceRebuildOutput = (& $runner -NoProfile -File $controllerPath source rebuild -Yes -NoPathUpdate -StateDir $stateDir -CommandDir $commandDir 2>&1 | Out-String)
+            $sourceRebuildOutput = (& $runner -NoProfile -File $controllerPath source rebuild -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
             Assert-Contains -Text $sourceRebuildOutput -Expected "source rebuild 已移除"
 
-            $sourceUninstallOutput = (& $runner -NoProfile -File $controllerPath source uninstall -Yes -NoPathUpdate -KeepCheckout -StateDir $stateDir -CommandDir $commandDir 2>&1 | Out-String)
+            $sourceUninstallOutput = (& $runner -NoProfile -File $controllerPath source uninstall -Yes -NoPathUpdate -KeepCheckout -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
             Assert-Contains -Text $sourceUninstallOutput -Expected "卸载源码条目"
-            if (!(Test-Path $sourceCheckoutDir)) { throw "源码 checkout 不应被删除" }
-            if (Test-Path (Join-Path $commandDir "hodexctl.cmd")) { throw "hodexctl 包装器未删除" }
+            if (!(Test-Path $smokeSourceCheckoutDir)) { throw "源码 checkout 不应被删除" }
+            if (Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd")) { throw "hodexctl 包装器未删除" }
         } else {
             Write-Host "==> 环境缺少 git/cargo/rustc，跳过源码闭环集成测试"
         }
