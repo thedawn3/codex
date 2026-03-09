@@ -864,6 +864,36 @@ function Detect-Platform {
     }
 }
 
+function Get-ObjectPropertyNames {
+    param([object]$InputObject)
+
+    if ($null -eq $InputObject) {
+        return @()
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        return @($InputObject.Keys | ForEach-Object { [string]$_ })
+    }
+
+    if ($InputObject -is [System.Array]) {
+        $nonNullItems = @($InputObject | Where-Object { $null -ne $_ })
+        if ($nonNullItems.Count -eq 1) {
+            return @(Get-ObjectPropertyNames -InputObject $nonNullItems[0])
+        }
+        return @()
+    }
+
+    if ($null -eq $InputObject.PSObject -or $null -eq $InputObject.PSObject.Properties) {
+        return @()
+    }
+
+    return @(
+        $InputObject.PSObject.Properties |
+            Where-Object { $null -ne $_ -and $null -ne $_.Name } |
+            ForEach-Object { [string]$_.Name }
+    )
+}
+
 function Get-StateFilePath {
     return Join-Path $script:StateRoot "state.json"
 }
@@ -875,23 +905,47 @@ function Ensure-StateShape {
         $State = [pscustomobject]@{}
     }
 
-    if (-not ($State.PSObject.Properties.Name -contains "schema_version")) {
+    if ($State -is [System.Array]) {
+        $nonNullItems = @($State | Where-Object { $null -ne $_ })
+        if ($nonNullItems.Count -eq 0) {
+            $State = [pscustomobject]@{}
+        } elseif ($nonNullItems.Count -eq 1) {
+            $State = $nonNullItems[0]
+        } else {
+            $State = $nonNullItems[-1]
+        }
+    }
+
+    $statePropertyNames = @(Get-ObjectPropertyNames -InputObject $State)
+
+    if ($statePropertyNames -notcontains "schema_version") {
         $State | Add-Member -NotePropertyName schema_version -NotePropertyValue 2 -Force
+        $statePropertyNames = @(Get-ObjectPropertyNames -InputObject $State)
     }
 
-    if (-not ($State.PSObject.Properties.Name -contains "source_profiles") -or $null -eq $State.source_profiles) {
+    if ($statePropertyNames -notcontains "source_profiles" -or $null -eq $State.source_profiles) {
         $State | Add-Member -NotePropertyName source_profiles -NotePropertyValue ([ordered]@{}) -Force
+        $statePropertyNames = @(Get-ObjectPropertyNames -InputObject $State)
     }
 
-    if (-not ($State.PSObject.Properties.Name -contains "active_runtime_aliases") -or $null -eq $State.active_runtime_aliases) {
+    if ($statePropertyNames -notcontains "active_runtime_aliases" -or $null -eq $State.active_runtime_aliases) {
         $State | Add-Member -NotePropertyName active_runtime_aliases -NotePropertyValue ([ordered]@{}) -Force
+    }
+
+    foreach ($field in @("repo", "installed_version", "release_tag", "release_name", "asset_name", "binary_path", "command_dir", "path_update_mode", "path_profile", "node_setup_choice", "installed_at")) {
+        if (@(Get-ObjectPropertyNames -InputObject $State) -notcontains $field) {
+            $State | Add-Member -NotePropertyName $field -NotePropertyValue "" -Force
+        }
+    }
+    if (@(Get-ObjectPropertyNames -InputObject $State) -notcontains "wrappers_created" -or $null -eq $State.wrappers_created) {
+        $State | Add-Member -NotePropertyName wrappers_created -NotePropertyValue @() -Force
     }
 
     if (
         -not [string]::IsNullOrWhiteSpace([string]$State.binary_path) -and
         (
             ($State.active_runtime_aliases -is [System.Collections.IDictionary] -and -not $State.active_runtime_aliases.Contains("hodex")) -or
-            ($State.active_runtime_aliases.PSObject.Properties.Name -notcontains "hodex")
+            (@(Get-ObjectPropertyNames -InputObject $State.active_runtime_aliases) -notcontains "hodex")
         )
     ) {
         if ($State.active_runtime_aliases -is [System.Collections.IDictionary]) {
@@ -904,7 +958,7 @@ function Ensure-StateShape {
     if (
         (
             ($State.active_runtime_aliases -is [System.Collections.IDictionary] -and $State.active_runtime_aliases.Contains("hodex") -and [string]$State.active_runtime_aliases["hodex"] -ne "release") -or
-            ($State.active_runtime_aliases.PSObject.Properties.Name -contains "hodex" -and [string]$State.active_runtime_aliases.hodex -ne "release")
+            (@(Get-ObjectPropertyNames -InputObject $State.active_runtime_aliases) -contains "hodex" -and [string]$State.active_runtime_aliases.hodex -ne "release")
         )
     ) {
         if (-not [string]::IsNullOrWhiteSpace([string]$State.binary_path)) {
@@ -926,11 +980,11 @@ function Ensure-StateShape {
         if ($State.active_runtime_aliases.Contains("hodex_stable")) {
             $State.active_runtime_aliases.Remove("hodex_stable")
         }
-    } elseif ($State.active_runtime_aliases.PSObject.Properties.Name -contains "hodex_stable") {
+    } elseif (@(Get-ObjectPropertyNames -InputObject $State.active_runtime_aliases) -contains "hodex_stable") {
         $State.active_runtime_aliases.PSObject.Properties.Remove("hodex_stable")
     }
 
-    if (-not ($State.PSObject.Properties.Name -contains "controller_path") -or [string]::IsNullOrWhiteSpace([string]$State.controller_path)) {
+    if (@(Get-ObjectPropertyNames -InputObject $State) -notcontains "controller_path" -or [string]::IsNullOrWhiteSpace([string]$State.controller_path)) {
         $State | Add-Member -NotePropertyName controller_path -NotePropertyValue (Join-Path $script:StateRoot "libexec\hodexctl.ps1") -Force
     }
 
@@ -941,8 +995,8 @@ function Ensure-StateShape {
             if ($null -eq $profile) {
                 continue
             }
-            if (-not ($profile.PSObject.Properties.Name -contains "last_synced_at") -or [string]::IsNullOrWhiteSpace([string]$profile.last_synced_at)) {
-                $legacyLastBuiltAt = if ($profile.PSObject.Properties.Name -contains "last_built_at") { [string]$profile.last_built_at } else { "" }
+            if (@(Get-ObjectPropertyNames -InputObject $profile) -notcontains "last_synced_at" -or [string]::IsNullOrWhiteSpace([string]$profile.last_synced_at)) {
+                $legacyLastBuiltAt = if (@(Get-ObjectPropertyNames -InputObject $profile) -contains "last_built_at") { [string]$profile.last_built_at } else { "" }
                 $profile | Add-Member -NotePropertyName last_synced_at -NotePropertyValue $legacyLastBuiltAt -Force
             }
         }
@@ -952,8 +1006,8 @@ function Ensure-StateShape {
             if ($null -eq $profile) {
                 continue
             }
-            if (-not ($profile.PSObject.Properties.Name -contains "last_synced_at") -or [string]::IsNullOrWhiteSpace([string]$profile.last_synced_at)) {
-                $legacyLastBuiltAt = if ($profile.PSObject.Properties.Name -contains "last_built_at") { [string]$profile.last_built_at } else { "" }
+            if (@(Get-ObjectPropertyNames -InputObject $profile) -notcontains "last_synced_at" -or [string]::IsNullOrWhiteSpace([string]$profile.last_synced_at)) {
+                $legacyLastBuiltAt = if (@(Get-ObjectPropertyNames -InputObject $profile) -contains "last_built_at") { [string]$profile.last_built_at } else { "" }
                 $profile | Add-Member -NotePropertyName last_synced_at -NotePropertyValue $legacyLastBuiltAt -Force
             }
         }
