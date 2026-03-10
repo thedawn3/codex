@@ -390,7 +390,7 @@ try {
                 $repairStatusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $repairStateDir -CommandDir $repairCommandDir 2>&1 | Out-String)
                 Assert-Contains -Text $repairStatusOutput -Expected "建议执行: hodexctl repair"
                 $repairOutput = (& $runner -NoProfile -File $controllerPath repair -Yes -StateDir $repairStateDir -CommandDir $repairCommandDir 2>&1 | Out-String)
-                Assert-Contains -Text $repairOutput -Expected "repair 已完成。"
+                if ($LASTEXITCODE -ne 0) { throw "repair 执行失败: $repairOutput" }
                 $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
                 if ($updatedUserPath -notlike "*$repairCommandDir*") { throw "repair 未写入用户 PATH" }
                 $repairShellOutput = (& $runner -NoProfile -Command @"
