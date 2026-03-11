@@ -3,9 +3,10 @@ $originalProgressPreference = $ProgressPreference
 
 $repo = if ($env:HODEXCTL_REPO) { $env:HODEXCTL_REPO } elseif ($env:CODEX_REPO) { $env:CODEX_REPO } else { "stellarlinkco/codex" }
 $controllerUrlBase = if ($env:HODEX_CONTROLLER_URL_BASE) { $env:HODEX_CONTROLLER_URL_BASE.TrimEnd('/') } else { "https://raw.githubusercontent.com" }
+$controllerRef = if ($env:HODEX_CONTROLLER_REF) { $env:HODEX_CONTROLLER_REF } else { "main" }
 $stateDir = if ($env:HODEX_STATE_DIR) { $env:HODEX_STATE_DIR } else { $null }
 $commandDir = if ($env:HODEX_COMMAND_DIR) { $env:HODEX_COMMAND_DIR } elseif ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { $null }
-$controllerUrl = "$controllerUrlBase/$repo/main/scripts/hodexctl/hodexctl.ps1"
+$controllerUrl = "$controllerUrlBase/$repo/$controllerRef/scripts/hodexctl/hodexctl.ps1"
 
 $resolvedStateDir = if ($stateDir) {
   $stateDir
@@ -44,7 +45,7 @@ $controllerPath = Join-Path $tempRoot "hodexctl.ps1"
 try {
   $ProgressPreference = "SilentlyContinue"
   New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-  Write-Host "==> 下载 hodexctl 管理脚本"
+  Write-Host "==> Download hodexctl manager script"
   Invoke-WebRequest -Uri $controllerUrl -OutFile $controllerPath
 
   $argumentList = @(
@@ -73,24 +74,24 @@ try {
   }
 
   $runner = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell" }
-  Write-Host "==> 启动 hodexctl 首次安装"
+  Write-Host "==> Start hodexctl initial install"
   & $runner @argumentList
   if ($LASTEXITCODE -ne 0) {
-    throw "hodexctl manager-install 失败，退出码: $LASTEXITCODE"
+    throw "hodexctl manager-install failed, exit code: $LASTEXITCODE"
   }
 
-  Write-Host "==> 安装完成"
+  Write-Host "==> Install complete"
   if ($env:HODEXCTL_NO_PATH_UPDATE -eq "1") {
-    Write-Host "==> 已跳过 PATH 写入，可直接运行: $resolvedWrapperCmd status"
+    Write-Host "==> PATH update skipped; you can run: $resolvedWrapperCmd status"
   } else {
     if (-not (Get-Command hodexctl -ErrorAction SilentlyContinue)) {
       Refresh-SessionPathFromRegistry
     }
     if (Get-Command hodexctl -ErrorAction SilentlyContinue) {
-      Write-Host "==> 当前会话已刷新 PATH，可直接运行: hodexctl status"
+      Write-Host "==> Current session PATH refreshed; you can run: hodexctl status"
     } else {
       $env:Path = "$resolvedCommandDir;$env:Path"
-      Write-Host "==> 当前会话已添加命令目录到 PATH，可直接运行: hodexctl status"
+      Write-Host "==> Command dir added to current session PATH; you can run: hodexctl status"
     }
   }
 } finally {

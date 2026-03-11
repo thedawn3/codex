@@ -3,9 +3,10 @@ set -euo pipefail
 
 repo="${HODEXCTL_REPO:-${CODEX_REPO:-stellarlinkco/codex}}"
 controller_url_base="${HODEX_CONTROLLER_URL_BASE:-https://raw.githubusercontent.com}"
+controller_ref="${HODEX_CONTROLLER_REF:-main}"
 state_dir="${HODEX_STATE_DIR:-$HOME/.hodex}"
 command_dir="${HODEX_COMMAND_DIR:-${INSTALL_DIR:-}}"
-controller_url="${controller_url_base%/}/${repo}/main/scripts/hodexctl/hodexctl.sh"
+controller_url="${controller_url_base%/}/${repo}/${controller_ref}/scripts/hodexctl/hodexctl.sh"
 
 select_profile_file() {
   if [[ -n "${SHELL:-}" ]]; then
@@ -39,10 +40,10 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 controller_path="$tmp_dir/hodexctl.sh"
 
-printf '==> 下载 hodexctl 管理脚本\n'
+printf '==> Download hodexctl manager script\n'
 curl -fsSL "$controller_url" -o "$controller_path"
 chmod +x "$controller_path"
-printf '==> 启动 hodexctl 首次安装\n'
+printf '==> Start hodexctl initial install\n'
 
 args=(manager-install --yes --state-dir "$state_dir" --repo "$repo")
 
@@ -60,18 +61,18 @@ fi
 
 "$controller_path" "${args[@]}"
 
-printf '==> 安装完成\n'
+printf '==> Install complete\n'
 effective_command_dir="$state_dir/commands"
 if [[ -n "$command_dir" ]]; then
   effective_command_dir="$command_dir"
 fi
-printf '==> 可直接运行（无需等待 PATH 生效）: %s\n' "$effective_command_dir/hodexctl status"
+printf '==> You can run immediately (no need to wait for PATH): %s\n' "$effective_command_dir/hodexctl status"
 
 if [[ "${HODEXCTL_NO_PATH_UPDATE:-0}" != "1" ]]; then
   profile_file="$(select_profile_file)"
   printf '\n'
-  printf '==> 为了让当前终端立即可用，请执行:\n'
+  printf '==> To make it available in the current shell, run:\n'
   printf 'source "%s"\n' "$profile_file"
   printf '\n'
-  printf '提示: `curl | bash` 在子进程执行，无法自动刷新父终端的 PATH；新开终端也会自动生效。\n'
+  printf 'Note: `curl | bash` runs in a subshell and cannot refresh the parent shell PATH; opening a new terminal also works.\n'
 fi

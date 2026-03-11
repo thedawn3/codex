@@ -12,9 +12,9 @@
 
 ### Hodexctl
 
-如果你想独立管理 `hodex` 的 release 版本，同时不影响现有 `codex`，可以使用 `hodexctl`。
+If you want to manage `hodex` releases without touching existing `codex`, use `hodexctl`.
 
-推荐首装方式：
+Recommended first install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/stellarlinkco/codex/main/scripts/install-hodexctl.sh | bash
@@ -24,19 +24,19 @@ curl -fsSL https://raw.githubusercontent.com/stellarlinkco/codex/main/scripts/in
 irm https://raw.githubusercontent.com/stellarlinkco/codex/main/scripts/install-hodexctl.ps1 | iex
 ```
 
-安装完成后，后续统一使用：
+After install, use:
 
 - `hodexctl`
 - `hodexctl install`
 - `hodexctl list`
 
-提示：
+Notes:
 
-- macOS / Linux / WSL 的 `curl | bash` 在子进程执行，安装后需要新开终端或按安装脚本输出执行 `source ~/.zshrc` / `source ~/.bashrc` 才能让当前会话立即识别 `hodexctl`。
-- Windows PowerShell 的 `irm | iex` 会尽量刷新当前会话的 `$env:Path`；如仍未生效，重新打开 PowerShell 即可。
-- 如遇到 PATH / wrapper / state 漂移导致命令不可用，可执行 `hodexctl repair` 自愈。
+- On macOS / Linux / WSL, `curl | bash` runs in a subshell. After install, open a new terminal or follow the installer output and run `source ~/.zshrc` / `source ~/.bashrc` to make `hodexctl` available in the current session.
+- On Windows PowerShell, `irm | iex` runs in the current session and tries to refresh `$env:Path`; if it still doesn’t work, reopen PowerShell.
+- If PATH / wrapper / state drift makes commands unavailable, run `hodexctl repair` to self-heal.
 
-常见用法：
+Common usage:
 
 macOS / Linux / WSL：
 
@@ -52,12 +52,12 @@ Windows PowerShell：
 - `hodexctl upgrade`
 - `hodexctl status`
 
-说明：
+Notes:
 
-- `hodex` 只管理 release。
-- `hodexctl source ...` 只负责源码下载、同步和工具链准备。
-- `hodexctl uninstall` 不会影响原有 `codex`。
-- 详细参数和交互说明见 [../scripts/hodexctl/README.md](../scripts/hodexctl/README.md)。
+- `hodex` manages releases only.
+- `hodexctl source ...` only handles source download, sync, and toolchain prep.
+- `hodexctl uninstall` does not affect existing `codex`.
+- See [../scripts/hodexctl/README.md](../scripts/hodexctl/README.md) for detailed parameters and interactive guidance.
 
 ### DotSlash
 

@@ -14,7 +14,7 @@ function Assert-Contains {
     )
 
     if ($Text -notlike "*$Expected*") {
-        throw "未找到预期内容: $Expected"
+        throw "Expected content not found: $Expected"
     }
 }
 
@@ -80,34 +80,34 @@ try {
     $summaryFallbackBin = Join-Path $tempRoot "summary-fallback-bin"
     $summaryFallbackArgs = Join-Path $tempRoot "summary-fallback-args.txt"
 
-    Write-Host "==> 检查 PowerShell 语法"
+    Write-Host "==> Check PowerShell syntax"
     [void][System.Management.Automation.Language.Parser]::ParseFile($controllerPath, [ref]$null, [ref]$null)
 
-    Write-Host "==> 检查帮助输出"
+    Write-Host "==> Check help output"
     $runner = Get-Runner
     $helpOutput = (& $runner -NoProfile -File $controllerPath -Help 2>&1 | Out-String)
-    Assert-Contains -Text $helpOutput -Expected "用法:"
+    Assert-Contains -Text $helpOutput -Expected "Usage:"
     Assert-Contains -Text $helpOutput -Expected "hodexctl list"
     Assert-Contains -Text $helpOutput -Expected ".\hodexctl.ps1 install"
     Assert-Contains -Text $helpOutput -Expected "source <action>"
 
-    Write-Host "==> 检查源码模式帮助输出"
+    Write-Host "==> Check source mode help output"
     $sourceHelpOutput = (& $runner -NoProfile -File $controllerPath source help 2>&1 | Out-String)
-    Assert-Contains -Text $sourceHelpOutput -Expected "源码模式用法:"
-    Assert-Contains -Text $sourceHelpOutput -Expected "install                下载源码并准备工具链（不接管 hodex）"
-    Assert-Contains -Text $sourceHelpOutput -Expected "指定源码记录名（工作区标识），默认 codex-source"
+    Assert-Contains -Text $sourceHelpOutput -Expected "Source mode usage:"
+    Assert-Contains -Text $sourceHelpOutput -Expected "install                Download source and prepare toolchain (does not take over hodex)"
+    Assert-Contains -Text $sourceHelpOutput -Expected "Source profile name (workspace id), default codex-source"
 
-    Write-Host "==> 检查 source/list 子命令 help 语义"
+    Write-Host "==> Check source/list help semantics"
     $sourceInstallHelpOutput = (& $runner -NoProfile -File $controllerPath source install -Help 2>&1 | Out-String)
     $listHelpOutput = (& $runner -NoProfile -File $controllerPath list -Help 2>&1 | Out-String)
-    Assert-Contains -Text $sourceInstallHelpOutput -Expected "源码模式用法:"
-    Assert-Contains -Text $listHelpOutput -Expected "版本列表用法:"
-    Assert-Contains -Text $listHelpOutput -Expected "更新日志页操作:"
+    Assert-Contains -Text $sourceInstallHelpOutput -Expected "Source mode usage:"
+    Assert-Contains -Text $listHelpOutput -Expected "Release list usage:"
+    Assert-Contains -Text $listHelpOutput -Expected "Changelog view actions:"
 
-    Write-Host "==> 检查 release changelog 总结优先调用 hodex"
+    Write-Host "==> Check release changelog summary prefers hodex"
     New-Item -ItemType Directory -Path $summaryBin -Force | Out-Null
-    New-FakeSummaryAgent -BinDir $summaryBin -Name "hodex" -SupportsExec $true -ResultText "这是 hodex 总结结果" -ArgsFile $summaryArgs -PromptFile $summaryPrompt
-    New-FakeSummaryAgent -BinDir $summaryBin -Name "codex" -SupportsExec $true -ResultText "不应调用 codex" -ArgsFile (Join-Path $tempRoot "unexpected-codex.txt")
+    New-FakeSummaryAgent -BinDir $summaryBin -Name "hodex" -SupportsExec $true -ResultText "This is the hodex summary result" -ArgsFile $summaryArgs -PromptFile $summaryPrompt
+    New-FakeSummaryAgent -BinDir $summaryBin -Name "codex" -SupportsExec $true -ResultText "codex should not be called" -ArgsFile (Join-Path $tempRoot "unexpected-codex.txt")
     $originalPath = $env:PATH
     try {
         $env:PATH = $summaryBin + [System.IO.Path]::PathSeparator + $env:PATH
@@ -124,22 +124,23 @@ try {
             release = [pscustomobject]@{ body = "- add feature A`n- fix bug B" }
         }
         $summaryResult = Invoke-ReleaseSummary -ReleaseInfo $releaseInfo
-        if (-not $summaryResult) { throw "Invoke-ReleaseSummary 未成功调用 hodex" }
+        if (-not $summaryResult) { throw "Invoke-ReleaseSummary did not call hodex successfully" }
         Assert-Contains -Text (Get-Content -LiteralPath $summaryArgs -Raw) -Expected "exec --skip-git-repo-check --color never --json -"
-        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "版本: 1.2.3"
-        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "完整 changelog:"
-        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "新增功能"
-        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "修复内容"
+        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "Version: 1.2.3"
+        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "Full changelog:"
+        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "New features"
+        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "Improvements"
+        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "Fixes"
         Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "- add feature A"
     } finally {
         $env:PATH = $originalPath
         Remove-Item Env:\HODEXCTL_SKIP_MAIN -ErrorAction SilentlyContinue
     }
 
-    Write-Host "==> 检查 release changelog 总结会回退到 codex"
+    Write-Host "==> Check release changelog summary falls back to codex"
     New-Item -ItemType Directory -Path $summaryFallbackBin -Force | Out-Null
-    New-FakeSummaryAgent -BinDir $summaryFallbackBin -Name "hodex" -SupportsExec $false -ResultText "不应调用 hodex" -ArgsFile (Join-Path $tempRoot "unsupported-hodex.txt")
-    New-FakeSummaryAgent -BinDir $summaryFallbackBin -Name "codex" -SupportsExec $true -ResultText "这是 codex 回退总结结果" -ArgsFile $summaryFallbackArgs
+    New-FakeSummaryAgent -BinDir $summaryFallbackBin -Name "hodex" -SupportsExec $false -ResultText "hodex should not be called" -ArgsFile (Join-Path $tempRoot "unsupported-hodex.txt")
+    New-FakeSummaryAgent -BinDir $summaryFallbackBin -Name "codex" -SupportsExec $true -ResultText "This is the codex fallback summary" -ArgsFile $summaryFallbackArgs
     $originalPath = $env:PATH
     try {
         $env:PATH = $summaryFallbackBin + [System.IO.Path]::PathSeparator + $env:PATH
@@ -156,21 +157,21 @@ try {
             release = [pscustomobject]@{ body = "fallback smoke" }
         }
         $summaryResult = Invoke-ReleaseSummary -ReleaseInfo $releaseInfo
-        if (-not $summaryResult) { throw "Invoke-ReleaseSummary 未成功回退到 codex" }
+        if (-not $summaryResult) { throw "Invoke-ReleaseSummary did not fall back to codex" }
         Assert-Contains -Text (Get-Content -LiteralPath $summaryFallbackArgs -Raw) -Expected "exec --skip-git-repo-check --color never --json -"
     } finally {
         $env:PATH = $originalPath
         Remove-Item Env:\HODEXCTL_SKIP_MAIN -ErrorAction SilentlyContinue
     }
 
-    Write-Host "==> 检查源码模式拒绝接管 hodex"
+    Write-Host "==> Check source mode refuses to take over hodex"
     $activateOutput = (& $runner -NoProfile -File $controllerPath source install -Activate 2>&1 | Out-String)
     if ($LASTEXITCODE -eq 0) {
-        throw "源码模式不应接受 -Activate"
+        throw "Source mode should not accept -Activate"
     }
-    Assert-Contains -Text $activateOutput -Expected "源码模式不允许接管 hodex"
+    Assert-Contains -Text $activateOutput -Expected "Source mode does not take over hodex"
 
-    Write-Host "==> 检查 manager-install 状态不伪造 hodex release"
+    Write-Host "==> Check manager-install does not fake hodex release"
     $env:HODEXCTL_SKIP_MAIN = "1"
     . $controllerPath
     Remove-Item Env:\HODEXCTL_SKIP_MAIN -ErrorAction SilentlyContinue
@@ -197,10 +198,10 @@ try {
         -InstalledAt "2026-03-09T00:00:00Z"
     $managerOnlyState = Get-Content -LiteralPath (Join-Path $script:StateRoot "state.json") -Raw
     if ($managerOnlyState -like '*"hodex": "release"*') {
-        throw "manager-install 不应伪造 hodex release alias"
+        throw "manager-install should not fake hodex release alias"
     }
 
-    Write-Host "==> 检查 manager-install 包装器保留自定义状态目录"
+    Write-Host "==> Check manager-install wrappers preserve custom state dir"
     $customStateDir = Join-Path $tempRoot "manager-wrapper-state"
     $customCommandDir = Join-Path $customStateDir "commands"
     $customControllerPath = Join-Path $customStateDir "libexec\hodexctl.ps1"
@@ -236,14 +237,14 @@ try {
 
     if ($env:OS -eq "Windows_NT") {
         $statusViaWrapper = (& $runner -NoProfile -File $wrapperPath status 2>&1 | Out-String)
-        Assert-Contains -Text $statusViaWrapper -Expected ("状态目录: " + $customStateDir)
-        Assert-Contains -Text $statusViaWrapper -Expected "正式版安装状态: 未安装"
-        Write-Host "==> 检查未安装状态输出"
+        Assert-Contains -Text $statusViaWrapper -Expected ("State dir: " + $customStateDir)
+        Assert-Contains -Text $statusViaWrapper -Expected "Release install status: not installed"
+        Write-Host "==> Check not-installed status output"
         $statusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $smokeStateDir 2>&1 | Out-String)
-	        Assert-Contains -Text $statusOutput -Expected "正式版安装状态: 未安装"
-	        Assert-Contains -Text $statusOutput -Expected ("状态目录: " + $smokeStateDir)
+	        Assert-Contains -Text $statusOutput -Expected "Release install status: not installed"
+	        Assert-Contains -Text $statusOutput -Expected ("State dir: " + $smokeStateDir)
 
-	        Write-Host "==> 检查 install-hodexctl.ps1 刷新当前会话 PATH"
+	        Write-Host "==> Check install-hodexctl.ps1 refreshes current session PATH"
 	        $installerRepo = "smoke-repo"
 	        $installerAssetsDir = Join-Path $tempRoot 'installer-assets'
 	        $installerControllerDir = Join-Path $installerAssetsDir (Join-Path $installerRepo 'main\scripts\hodexctl')
@@ -284,12 +285,12 @@ try {
 		                Remove-Item Env:\HODEXCTL_NO_PATH_UPDATE -ErrorAction SilentlyContinue
 
 		                $installerOutput = (& $installScriptPath *>&1 | Out-String)
-		                Assert-Contains -Text $installerOutput -Expected "当前会话已"
+		                Assert-Contains -Text $installerOutput -Expected "current session PATH"
 		                $hodexctlSource = (Get-Command hodexctl -ErrorAction Stop).Source
 		                Assert-Contains -Text $hodexctlSource -Expected $installCommandDir
 		                $statusAfterInstall = (& hodexctl status 2>&1 | Out-String)
-		                Assert-Contains -Text $statusAfterInstall -Expected ("状态目录: " + $installStateDir)
-		                if ($ProgressPreference -ne "Continue") { throw "install-hodexctl.ps1 不应修改 ProgressPreference" }
+		                Assert-Contains -Text $statusAfterInstall -Expected ("State dir: " + $installStateDir)
+		                if ($ProgressPreference -ne "Continue") { throw "install-hodexctl.ps1 should not modify ProgressPreference" }
 		            } finally {
 		                $ProgressPreference = $originalProgressPreference
 		                [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
@@ -303,7 +304,7 @@ try {
 	            try { if ($installerServer -and -not $installerServer.HasExited) { $installerServer.Kill() } } catch {}
 	        }
 
-	        Write-Host "==> 检查 release-only 安装与卸载清理"
+	        Write-Host "==> Check release-only install and uninstall cleanup"
 	        $assetsDir = Join-Path $tempRoot 'release-assets'
 	        $releaseDir = Join-Path $assetsDir 'latest\download'
 	        $brokenReleaseDir = Join-Path $tempRoot 'broken-release-assets\latest\download'
@@ -360,25 +361,25 @@ try {
 
             $env:HODEX_RELEASE_BASE_URL = "http://127.0.0.1:$releasePort"
             $releaseInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -NoPathUpdate -StateDir $releaseStateDir -CommandDir $releaseCommandDir 2>&1 | Out-String)
-            Assert-Contains -Text $releaseInstallOutput -Expected "安装完成"
+            Assert-Contains -Text $releaseInstallOutput -Expected "Install complete:"
             $releaseStatusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $releaseStateDir 2>&1 | Out-String)
-            Assert-Contains -Text $releaseStatusOutput -Expected "Windows 运行组件: 完整"
-            Assert-Contains -Text $releaseStatusOutput -Expected "codex-command-runner.exe: 已安装"
-            Assert-Contains -Text $releaseStatusOutput -Expected "codex-windows-sandbox-setup.exe: 已安装"
-            if (!(Test-Path (Join-Path $releaseCommandDir "hodex.cmd"))) { throw "release hodex.cmd 未生成" }
-            if (!(Test-Path (Join-Path $releaseCommandDir "hodexctl.cmd"))) { throw "release hodexctl.cmd 未生成" }
-            if (!(Test-Path (Join-Path $releaseStateDir "bin\codex-command-runner.exe"))) { throw "release codex-command-runner.exe 未生成" }
-            if (!(Test-Path (Join-Path $releaseStateDir "bin\codex-windows-sandbox-setup.exe"))) { throw "release codex-windows-sandbox-setup.exe 未生成" }
+            Assert-Contains -Text $releaseStatusOutput -Expected "Windows runtime components: complete"
+            Assert-Contains -Text $releaseStatusOutput -Expected "codex-command-runner.exe: installed"
+            Assert-Contains -Text $releaseStatusOutput -Expected "codex-windows-sandbox-setup.exe: installed"
+            if (!(Test-Path (Join-Path $releaseCommandDir "hodex.cmd"))) { throw "release hodex.cmd was not created" }
+            if (!(Test-Path (Join-Path $releaseCommandDir "hodexctl.cmd"))) { throw "release hodexctl.cmd was not created" }
+            if (!(Test-Path (Join-Path $releaseStateDir "bin\codex-command-runner.exe"))) { throw "release codex-command-runner.exe was not created" }
+            if (!(Test-Path (Join-Path $releaseStateDir "bin\codex-windows-sandbox-setup.exe"))) { throw "release codex-windows-sandbox-setup.exe was not created" }
 
             $releaseUninstallOutput = (& $runner -NoProfile -File $controllerPath uninstall -StateDir $releaseStateDir 2>&1 | Out-String)
-            Assert-Contains -Text $releaseUninstallOutput -Expected "已删除正式版二进制、包装器和安装状态。"
-            if (Test-Path (Join-Path $releaseCommandDir "hodex.cmd")) { throw "release hodex.cmd 未删除" }
-            if (Test-Path (Join-Path $releaseCommandDir "hodexctl.cmd")) { throw "release hodexctl.cmd 未删除" }
-            if (Test-Path (Join-Path $releaseStateDir "state.json")) { throw "release state.json 未删除" }
-            if (Test-Path (Join-Path $releaseStateDir "bin\codex-command-runner.exe")) { throw "release codex-command-runner.exe 未删除" }
-            if (Test-Path (Join-Path $releaseStateDir "bin\codex-windows-sandbox-setup.exe")) { throw "release codex-windows-sandbox-setup.exe 未删除" }
+            Assert-Contains -Text $releaseUninstallOutput -Expected "Removed release binary, wrappers, and install state."
+            if (Test-Path (Join-Path $releaseCommandDir "hodex.cmd")) { throw "release hodex.cmd was not deleted" }
+            if (Test-Path (Join-Path $releaseCommandDir "hodexctl.cmd")) { throw "release hodexctl.cmd was not deleted" }
+            if (Test-Path (Join-Path $releaseStateDir "state.json")) { throw "release state.json was not deleted" }
+            if (Test-Path (Join-Path $releaseStateDir "bin\codex-command-runner.exe")) { throw "release codex-command-runner.exe was not deleted" }
+            if (Test-Path (Join-Path $releaseStateDir "bin\codex-windows-sandbox-setup.exe")) { throw "release codex-windows-sandbox-setup.exe was not deleted" }
 
-            Write-Host "==> 检查 Windows repair 可补齐用户 PATH"
+            Write-Host "==> Check Windows repair backfills user PATH"
             $repairStateDir = Join-Path $tempRoot 'repair-state'
             $repairCommandDir = Join-Path $tempRoot 'repair-command'
             New-Item -ItemType Directory -Path $repairStateDir -Force | Out-Null
@@ -386,26 +387,26 @@ try {
             $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
             try {
                 $repairInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -NoPathUpdate -StateDir $repairStateDir -CommandDir $repairCommandDir 2>&1 | Out-String)
-                Assert-Contains -Text $repairInstallOutput -Expected "安装完成"
+                Assert-Contains -Text $repairInstallOutput -Expected "Install complete:"
                 $repairStatusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $repairStateDir -CommandDir $repairCommandDir 2>&1 | Out-String)
-                Assert-Contains -Text $repairStatusOutput -Expected "建议执行: hodexctl repair"
+                Assert-Contains -Text $repairStatusOutput -Expected "Recommended: run hodexctl repair"
                 $repairOutput = (& $runner -NoProfile -File $controllerPath repair -Yes -StateDir $repairStateDir -CommandDir $repairCommandDir 2>&1 | Out-String)
-                if ($LASTEXITCODE -ne 0) { throw "repair 执行失败: $repairOutput" }
+                if ($LASTEXITCODE -ne 0) { throw "repair failed: $repairOutput" }
                 $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-                if ($updatedUserPath -notlike "*$repairCommandDir*") { throw "repair 未写入用户 PATH" }
+                if ($updatedUserPath -notlike "*$repairCommandDir*") { throw "repair did not write to user PATH" }
                 $repairShellOutput = (& $runner -NoProfile -Command @"
 `$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User')
 `$hodexSource = (Get-Command hodex -ErrorAction Stop).Source
 Write-Output `$hodexSource
 & hodex --version
 "@ 2>&1 | Out-String)
-                if ($LASTEXITCODE -ne 0) { throw "repair shell 校验失败: $repairShellOutput" }
+                if ($LASTEXITCODE -ne 0) { throw "repair shell validation failed: $repairShellOutput" }
                 Assert-Contains -Text $repairShellOutput -Expected $repairCommandDir
             } finally {
                 [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
             }
 
-            Write-Host "==> 检查 Windows 预存用户 PATH 卸载后不误删"
+            Write-Host "==> Check Windows preexisting user PATH is not removed on uninstall"
             $preexistingStateDir = Join-Path $tempRoot 'preexisting-state'
             $preexistingCommandDir = Join-Path $tempRoot 'preexisting-command'
             New-Item -ItemType Directory -Path $preexistingStateDir -Force | Out-Null
@@ -416,19 +417,19 @@ Write-Output `$hodexSource
                 [Environment]::SetEnvironmentVariable("Path", (Add-PathEntry -PathValue $originalUserPath -Entry $preexistingCommandDir), "User")
                 $env:Path = Remove-PathEntry -PathValue $originalProcessPath -Entry $preexistingCommandDir
                 $preexistingInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -StateDir $preexistingStateDir -CommandDir $preexistingCommandDir 2>&1 | Out-String)
-                Assert-Contains -Text $preexistingInstallOutput -Expected "安装完成"
+                Assert-Contains -Text $preexistingInstallOutput -Expected "Install complete:"
                 $preexistingStatusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $preexistingStateDir -CommandDir $preexistingCommandDir 2>&1 | Out-String)
-                Assert-Contains -Text $preexistingStatusOutput -Expected "PATH 来源: preexisting-user-path"
+                Assert-Contains -Text $preexistingStatusOutput -Expected "PATH source: preexisting-user-path"
                 $preexistingUninstallOutput = (& $runner -NoProfile -File $controllerPath uninstall -StateDir $preexistingStateDir 2>&1 | Out-String)
-                Assert-Contains -Text $preexistingUninstallOutput -Expected "已删除正式版二进制、包装器和安装状态。"
+                Assert-Contains -Text $preexistingUninstallOutput -Expected "Removed release binary, wrappers, and install state."
                 $userPathAfterUninstall = [Environment]::GetEnvironmentVariable("Path", "User")
-                if ($userPathAfterUninstall -notlike "*$preexistingCommandDir*") { throw "卸载误删了用户原有 PATH 条目" }
+                if ($userPathAfterUninstall -notlike "*$preexistingCommandDir*") { throw "Uninstall removed preexisting user PATH entry" }
 	            } finally {
 	                [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
 	                $env:Path = $originalProcessPath
 	            }
 
-	            Write-Host "==> 检查 Windows 旧 state.json 卸载仍会清理用户 PATH"
+	            Write-Host "==> Check Windows legacy state.json uninstall still cleans user PATH"
 	            $legacyStateDir = Join-Path $tempRoot 'legacy-state'
 	            $legacyCommandDir = Join-Path $tempRoot 'legacy-command'
 	            New-Item -ItemType Directory -Path $legacyStateDir -Force | Out-Null
@@ -464,32 +465,32 @@ Write-Output `$hodexSource
 	                $env:Path = Add-PathEntry -PathValue $originalProcessPath -Entry $legacyCommandDir
 
 	                $legacyUninstallOutput = (& $runner -NoProfile -File $controllerPath uninstall -StateDir $legacyStateDir 2>&1 | Out-String)
-	                Assert-Contains -Text $legacyUninstallOutput -Expected "已卸载 hodexctl 管理器。"
+	                Assert-Contains -Text $legacyUninstallOutput -Expected "hodexctl manager uninstalled."
 	                $userPathAfterUninstall = [Environment]::GetEnvironmentVariable("Path", "User")
-	                if ($userPathAfterUninstall -like "*$legacyCommandDir*") { throw "旧 state.json 卸载后仍残留用户 PATH 条目" }
+	                if ($userPathAfterUninstall -like "*$legacyCommandDir*") { throw "Legacy state.json uninstall left user PATH entry" }
 	            } finally {
 	                [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
 	                $env:Path = $originalProcessPath
 	            }
 
-	            Write-Host "==> 检查 Windows 缺失 helper 时严格失败"
+	            Write-Host "==> Check Windows missing helper fails strictly"
 	            $env:HODEX_RELEASE_BASE_URL = "http://127.0.0.1:$brokenReleasePort"
 	            $brokenInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -NoPathUpdate -StateDir (Join-Path $tempRoot 'broken-state') -CommandDir (Join-Path $tempRoot 'broken-command') 2>&1 | Out-String)
-	            if ($LASTEXITCODE -eq 0) { throw "缺失 helper 的 Windows release 安装不应成功" }
-            Assert-Contains -Text $brokenInstallOutput -Expected "当前 Windows release 资产缺少必需 helper"
+	            if ($LASTEXITCODE -eq 0) { throw "Windows release install with missing helper should not succeed" }
+            Assert-Contains -Text $brokenInstallOutput -Expected "Windows release asset missing required helper"
         } finally {
             try { if ($releaseServer -and -not $releaseServer.HasExited) { $releaseServer.Kill() } } catch {}
             try { if ($brokenServer -and -not $brokenServer.HasExited) { $brokenServer.Kill() } } catch {}
             Remove-Item Env:\HODEX_RELEASE_BASE_URL -ErrorAction SilentlyContinue
         }
 
-        Write-Host "==> 检查源码空状态输出"
+        Write-Host "==> Check source empty state output"
         $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -StateDir $smokeStateDir 2>&1 | Out-String)
         $sourceListOutput = (& $runner -NoProfile -File $controllerPath source list -StateDir $smokeStateDir 2>&1 | Out-String)
-        Assert-Contains -Text $sourceStatusOutput -Expected "未安装任何源码条目"
-        Assert-Contains -Text $sourceListOutput -Expected "当前没有已记录的源码条目"
+        Assert-Contains -Text $sourceStatusOutput -Expected "No source profiles installed"
+        Assert-Contains -Text $sourceListOutput -Expected "No source profiles recorded"
 
-        Write-Host "==> 检查源码模式本地闭环同步"
+        Write-Host "==> Check source mode local loopback sync"
         if ((Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -ErrorAction SilentlyContinue)) {
             New-Item -ItemType Directory -Path (Join-Path $sourceRepoDir "src") -Force | Out-Null
             New-Item -ItemType Directory -Path $smokeCommandDir -Force | Out-Null
@@ -518,17 +519,17 @@ fn main() {
             & git -C $sourceRepoDir tag smoke-tag | Out-Null
 
             $sourceInstallOutput = (& $runner -NoProfile -File $controllerPath source install -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir -GitUrl $sourceRepoDir -Profile smoke-source -Ref main -CheckoutDir $smokeSourceCheckoutDir 2>&1 | Out-String)
-            Assert-Contains -Text $sourceInstallOutput -Expected "结果摘要"
-            Assert-Contains -Text $sourceInstallOutput -Expected "源码记录名: smoke-source"
-            if (!(Test-Path (Join-Path $smokeSourceCheckoutDir ".git"))) { throw "源码 checkout 未生成" }
-            if (!(Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd"))) { throw "hodexctl 包装器未生成" }
+            Assert-Contains -Text $sourceInstallOutput -Expected "Result summary"
+            Assert-Contains -Text $sourceInstallOutput -Expected "Source profile: smoke-source"
+            if (!(Test-Path (Join-Path $smokeSourceCheckoutDir ".git"))) { throw "Source checkout was not created" }
+            if (!(Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd"))) { throw "hodexctl wrapper was not created" }
             $checkoutHead = (& git -C $smokeSourceCheckoutDir rev-parse HEAD | Out-String).Trim()
             $repoHead = (& git -C $sourceRepoDir rev-parse HEAD | Out-String).Trim()
-            if ($checkoutHead -ne $repoHead) { throw "源码安装后 checkout HEAD 不一致" }
+            if ($checkoutHead -ne $repoHead) { throw "Source install checkout HEAD mismatch" }
 
             $sourceStatusOutput = (& $runner -NoProfile -File $controllerPath source status -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
-            Assert-Contains -Text $sourceStatusOutput -Expected "名称: smoke-source"
-            Assert-Contains -Text $sourceStatusOutput -Expected "模式: 仅管理源码 checkout 与工具链，不生成源码命令入口"
+            Assert-Contains -Text $sourceStatusOutput -Expected "Name: smoke-source"
+            Assert-Contains -Text $sourceStatusOutput -Expected "Mode: manage checkout and toolchain only; no source command wrappers generated"
 
             Set-Content -Path (Join-Path $sourceRepoDir "src/main.rs") -Value @"
 fn main() {
@@ -539,39 +540,39 @@ fn main() {
             & git -C $sourceRepoDir commit -m "update smoke repo" | Out-Null
 
             $sourceUpdateOutput = (& $runner -NoProfile -File $controllerPath source update -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
-            Assert-Contains -Text $sourceUpdateOutput -Expected "更新源码"
+            Assert-Contains -Text $sourceUpdateOutput -Expected "Action: Update source"
             $checkoutHead = (& git -C $smokeSourceCheckoutDir rev-parse HEAD | Out-String).Trim()
             $repoHead = (& git -C $sourceRepoDir rev-parse HEAD | Out-String).Trim()
-            if ($checkoutHead -ne $repoHead) { throw "源码更新后 checkout HEAD 不一致" }
+            if ($checkoutHead -ne $repoHead) { throw "Source update checkout HEAD mismatch" }
 
             & git -C $sourceRepoDir checkout -b feature-smoke-switch | Out-Null
             $env:HODEXCTL_SKIP_MAIN = "1"
             . $controllerPath
             Remove-Item Env:\HODEXCTL_SKIP_MAIN -ErrorAction SilentlyContinue
             $refCandidates = @(Get-SourceRefCandidates -RepoInput $sourceRepoDir -ProfileName "smoke-source" -DefaultRef "main" -CheckoutDir $smokeSourceCheckoutDir)
-            if ($refCandidates -notcontains "feature-smoke-switch") { throw "真实 Git refs 未进入源码 ref 候选列表" }
-            if ($refCandidates -contains "smoke-tag") { throw "branch 候选列表不应默认混入 tag" }
+            if ($refCandidates -notcontains "feature-smoke-switch") { throw "Git refs were not included in source ref candidates" }
+            if ($refCandidates -contains "smoke-tag") { throw "Branch candidates should not include tags by default" }
 
             $sourceSwitchOutput = (& $runner -NoProfile -File $controllerPath source switch -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir -Ref feature-smoke-switch 2>&1 | Out-String)
-            Assert-Contains -Text $sourceSwitchOutput -Expected "切换 ref 并同步源码"
+            Assert-Contains -Text $sourceSwitchOutput -Expected "Action: Switch ref and sync source"
             $currentBranch = (& git -C $smokeSourceCheckoutDir rev-parse --abbrev-ref HEAD | Out-String).Trim()
-            if ($currentBranch -ne "feature-smoke-switch") { throw "源码切换 ref 后分支不正确" }
+            if ($currentBranch -ne "feature-smoke-switch") { throw "Source switch ref branch mismatch" }
 
             $sourceRebuildOutput = (& $runner -NoProfile -File $controllerPath source rebuild -Yes -NoPathUpdate -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
-            Assert-Contains -Text $sourceRebuildOutput -Expected "source rebuild 已移除"
+            Assert-Contains -Text $sourceRebuildOutput -Expected "source rebuild has been removed"
 
             $sourceUninstallOutput = (& $runner -NoProfile -File $controllerPath source uninstall -Yes -NoPathUpdate -KeepCheckout -StateDir $smokeStateDir -CommandDir $smokeCommandDir 2>&1 | Out-String)
-            Assert-Contains -Text $sourceUninstallOutput -Expected "卸载源码条目"
-            if (!(Test-Path $smokeSourceCheckoutDir)) { throw "源码 checkout 不应被删除" }
-            if (Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd")) { throw "hodexctl 包装器未删除" }
+            Assert-Contains -Text $sourceUninstallOutput -Expected "Source profile uninstalled"
+            if (!(Test-Path $smokeSourceCheckoutDir)) { throw "Source checkout should not be deleted" }
+            if (Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd")) { throw "hodexctl wrapper was not deleted" }
         } else {
-            Write-Host "==> 环境缺少 git/cargo/rustc，跳过源码闭环集成测试"
+            Write-Host "==> Missing git/cargo/rustc; skip source loopback integration test"
         }
     } else {
-        Write-Host "==> 非 Windows 环境，跳过运行态检查"
+        Write-Host "==> Non-Windows environment; skip runtime checks"
     }
 
-    Write-Host "==> Smoke 测试通过"
+    Write-Host "==> Smoke test passed"
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
