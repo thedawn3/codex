@@ -4502,60 +4502,72 @@ function Invoke-Repair {
 }
 
 if (-not $env:HODEXCTL_SKIP_MAIN) {
-    Ensure-LocalToolPaths
-    Normalize-Parameters
-    if ($script:RawSourceHelpRequest -or ($script:RequestedCommand -eq "source" -and $script:SourceAction -eq "help")) {
-        Show-SourceUsage
-        exit 0
-    }
-    Detect-Platform
-    $script:State = Load-State
+    try {
+        Ensure-LocalToolPaths
+        Normalize-Parameters
+        if ($script:RawSourceHelpRequest -or ($script:RequestedCommand -eq "source" -and $script:SourceAction -eq "help")) {
+            Show-SourceUsage
+            exit 0
+        }
+        Detect-Platform
+        $script:State = Load-State
 
-    switch ($script:RequestedCommand) {
-        "install" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Install"
-        }
-        "upgrade" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Upgrade"
-        }
-        "download" {
-            Invoke-Download -RequestedVersion $script:RequestedVersion
-        }
-        "downgrade" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Downgrade"
-        }
-        "source" {
-            switch ($script:SourceAction) {
-                "install" { Invoke-SourceInstall }
-                "update" { Invoke-SourceUpdate }
-                "rebuild" { Invoke-SourceRebuild }
-                "switch" { Invoke-SourceSwitch }
-                "status" { Invoke-SourceStatus }
-                "uninstall" { Invoke-SourceUninstall }
-                "list" { Invoke-SourceList }
-                default { Show-SourceUsage }
+        switch ($script:RequestedCommand) {
+            "install" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Install"
+            }
+            "upgrade" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Upgrade"
+            }
+            "download" {
+                Invoke-Download -RequestedVersion $script:RequestedVersion
+            }
+            "downgrade" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Downgrade"
+            }
+            "source" {
+                switch ($script:SourceAction) {
+                    "install" { Invoke-SourceInstall }
+                    "update" { Invoke-SourceUpdate }
+                    "rebuild" { Invoke-SourceRebuild }
+                    "switch" { Invoke-SourceSwitch }
+                    "status" { Invoke-SourceStatus }
+                    "uninstall" { Invoke-SourceUninstall }
+                    "list" { Invoke-SourceList }
+                    default { Show-SourceUsage }
+                }
+            }
+            "uninstall" {
+                Invoke-Uninstall
+            }
+            "status" {
+                Invoke-Status
+            }
+            "list" {
+                Invoke-List
+            }
+            "relink" {
+                Invoke-Relink
+            }
+            "repair" {
+                Invoke-Repair
+            }
+            "manager-install" {
+                Invoke-ManagerInstall
+            }
+            default {
+                Fail "Unknown command: $script:RequestedCommand"
             }
         }
-        "uninstall" {
-            Invoke-Uninstall
+    } catch {
+        $message = $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = ($_ | Out-String).Trim()
         }
-        "status" {
-            Invoke-Status
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = "Unknown error."
         }
-        "list" {
-            Invoke-List
-        }
-        "relink" {
-            Invoke-Relink
-        }
-        "repair" {
-            Invoke-Repair
-        }
-        "manager-install" {
-            Invoke-ManagerInstall
-        }
-        default {
-            Fail "Unknown command: $script:RequestedCommand"
-        }
+        Write-Error $message
+        exit 1
     }
 }
