@@ -101,6 +101,11 @@ try {
     Assert-Contains -Text $helpOutput -Expected ".\hodexctl.ps1 install"
     Assert-Contains -Text $helpOutput -Expected "source <action>"
 
+    Write-Host "==> Check downgrade accepts explicit version argument"
+    $downgradeHelpOutput = (& $runner -NoProfile -File $controllerPath downgrade 1.0.0 -Help 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "Expected exit code 0; got: $LASTEXITCODE`n$downgradeHelpOutput" }
+    Assert-Contains -Text $downgradeHelpOutput -Expected "Usage:"
+
     Write-Host "==> Check source mode help output"
     $sourceHelpOutput = (& $runner -NoProfile -File $controllerPath source help 2>&1 | Out-String)
     Assert-Contains -Text $sourceHelpOutput -Expected "Source mode usage:"

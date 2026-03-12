@@ -71,6 +71,7 @@ $script:SourceGitUrl = $GitUrl
 $script:SourceCheckoutDir = $CheckoutDir
 $script:SourceCheckoutPolicy = if ($RemoveCheckout) { "remove" } elseif ($KeepCheckout) { "keep" } else { "ask" }
 $script:ExplicitSourceRef = $PSBoundParameters.ContainsKey("Ref")
+$script:ExplicitVersion = $PSBoundParameters.ContainsKey("Version")
 $script:RawSourceHelpRequest = ($Command -eq "source" -and $Version -eq "help")
 
 if ($PSBoundParameters.ContainsKey("Name")) {
@@ -757,7 +758,7 @@ function Normalize-Parameters {
     }
 
     if ($script:RequestedCommand -notin $validCommands) {
-        if ($PSBoundParameters.ContainsKey("Version")) {
+        if ($script:ExplicitVersion) {
             Fail "Unexpected extra arg: $script:RequestedVersion"
         }
         $script:RequestedVersion = $script:RequestedCommand
@@ -786,37 +787,37 @@ function Normalize-Parameters {
             }
         }
         "downgrade" {
-            if (-not $PSBoundParameters.ContainsKey("Version") -or (Normalize-Version $script:RequestedVersion) -eq "latest") {
+            if (-not $script:ExplicitVersion -or (Normalize-Version $script:RequestedVersion) -eq "latest") {
                 Fail "downgrade requires an explicit version"
             }
         }
         "uninstall" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "uninstall does not accept a version argument"
             }
         }
         "status" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "status does not accept a version argument"
             }
         }
         "list" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "list does not accept a version argument"
             }
         }
         "relink" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "relink does not accept a version argument"
             }
         }
         "repair" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "repair does not accept a version argument"
             }
         }
         "manager-install" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "manager-install does not accept a version argument"
             }
         }
@@ -3773,7 +3774,7 @@ function Invoke-SourceUpdate {
     }
     $profileName = Resolve-SourceProfileName -RequireExisting $true
     $existing = Get-SourceProfile -ProfileName $profileName
-    if (-not $PSBoundParameters.ContainsKey("Ref")) {
+    if (-not $script:ExplicitSourceRef) {
         $script:SourceRef = [string]$existing.current_ref
     }
     Invoke-SourceBuild -ProfileName $profileName -ActivationMode "no" -ActionLabel "Update source"
