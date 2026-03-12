@@ -18,6 +18,8 @@ pub fn is_known_safe_command(command: &[String]) -> bool {
         })
         .collect();
 
+    // `is_safe_command_windows` may invoke PowerShell for parsing, so only run it on Windows.
+    #[cfg(windows)]
     if is_safe_command_windows(&command) {
         return true;
     }
