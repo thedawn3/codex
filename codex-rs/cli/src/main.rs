@@ -57,7 +57,9 @@ use codex_core::terminal::TerminalName;
 
 /// Codex CLI
 ///
+/// Codex 命令行入口。
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
+/// 如果不带子命令，参数会交给交互式 CLI 处理。
 #[derive(Debug, Parser)]
 #[clap(
     author,
@@ -87,44 +89,57 @@ struct MultitoolCli {
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
     /// Run Codex non-interactively.
+    /// 非交互模式运行，适合脚本、CI 或单次任务。
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
 
     /// Run a local GitHub webhook listener that delegates work to Codex.
+    /// 运行本地 GitHub webhook 监听器，把事件交给 Codex 处理。
     Github(GithubCommand),
 
     /// Start Codex as a Web UI server (HTTP+SSE).
+    /// 启动 Web UI 服务，浏览器通过 HTTP+SSE 访问。
     Serve(ServeCli),
 
     /// Run a code review non-interactively.
+    /// 非交互式代码审查。
     Review(ReviewArgs),
 
     /// Manage login.
+    /// 登录与认证管理。
     Login(LoginCommand),
 
     /// Remove stored authentication credentials.
+    /// 删除本地保存的认证凭据。
     Logout(LogoutCommand),
 
     /// Manage external MCP servers for Codex.
+    /// 管理外部 MCP 服务器配置。
     Mcp(McpCli),
 
     /// Start Codex as an MCP server (stdio).
+    /// 以 MCP 服务端模式启动，通过 stdio 通信。
     McpServer,
 
     /// [experimental] Run the app server or related tooling.
+    /// [实验性] 运行 app server 或相关工具。
     AppServer(AppServerCommand),
 
     /// Launch the Codex desktop app (downloads the macOS installer if missing).
+    /// 启动 Codex 桌面应用，缺少安装器时会自动下载。
     #[cfg(target_os = "macos")]
     App(app_cmd::AppCommand),
 
     /// Generate shell completion scripts.
+    /// 生成 shell 自动补全脚本。
     Completion(CompletionCommand),
 
     /// Run commands within a Codex-provided sandbox.
+    /// 在 Codex 提供的沙箱中运行命令。
     Sandbox(SandboxArgs),
 
     /// Debugging tools.
+    /// 调试工具集合。
     Debug(DebugCommand),
 
     /// Execpolicy tooling.
@@ -132,16 +147,20 @@ enum Subcommand {
     Execpolicy(ExecpolicyCommand),
 
     /// Apply the latest diff produced by Codex agent as a `git apply` to your local working tree.
+    /// 将 Codex 代理生成的最新 diff 应用到当前工作区。
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
 
     /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
+    /// 恢复之前的交互式会话，默认弹出选择器。
     Resume(ResumeCommand),
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
+    /// 基于之前的交互式会话分叉出一个新会话。
     Fork(ForkCommand),
 
     /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
+    /// [实验性] 浏览 Codex Cloud 任务并把修改应用到本地。
     #[clap(name = "cloud", alias = "cloud-tasks")]
     Cloud(CloudTasksCli),
 
@@ -154,12 +173,14 @@ enum Subcommand {
     StdioToUds(StdioToUdsCommand),
 
     /// Inspect feature flags.
+    /// 查看和切换功能开关。
     Features(FeaturesCli),
 }
 
 #[derive(Debug, Parser)]
 struct CompletionCommand {
-    /// Shell to generate completions for
+    /// Shell to generate completions for.
+    /// 要为哪个 shell 生成补全脚本。
     #[clap(value_enum, default_value_t = Shell::Bash)]
     shell: Shell,
 }
@@ -202,14 +223,17 @@ struct DebugAppServerSendMessageV2Command {
 struct ResumeCommand {
     /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
     /// If omitted, use --last to pick the most recent recorded session.
+    /// 会话 ID 或线程名；如果能解析为 UUID，会优先按 UUID 处理。
     #[arg(value_name = "SESSION_ID")]
     session_id: Option<String>,
 
     /// Continue the most recent session without showing the picker.
+    /// 直接继续最近一次会话，不显示选择器。
     #[arg(long = "last", default_value_t = false)]
     last: bool,
 
     /// Show all sessions (disables cwd filtering and shows CWD column).
+    /// 显示全部会话，不按当前目录过滤。
     #[arg(long = "all", default_value_t = false)]
     all: bool,
 
@@ -221,14 +245,17 @@ struct ResumeCommand {
 struct ForkCommand {
     /// Conversation/session id (UUID). When provided, forks this session.
     /// If omitted, use --last to pick the most recent recorded session.
+    /// 指定要分叉的会话 ID；不传时可配合 --last 使用。
     #[arg(value_name = "SESSION_ID")]
     session_id: Option<String>,
 
     /// Fork the most recent session without showing the picker.
+    /// 直接分叉最近一次会话，不显示选择器。
     #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
     last: bool,
 
     /// Show all sessions (disables cwd filtering and shows CWD column).
+    /// 显示全部会话，不按当前目录过滤。
     #[arg(long = "all", default_value_t = false)]
     all: bool,
 
@@ -245,14 +272,17 @@ struct SandboxArgs {
 #[derive(Debug, clap::Subcommand)]
 enum SandboxCommand {
     /// Run a command under Seatbelt (macOS only).
+    /// 使用 macOS Seatbelt 沙箱运行命令。
     #[clap(visible_alias = "seatbelt")]
     Macos(SeatbeltCommand),
 
     /// Run a command under Landlock+seccomp (Linux only).
+    /// 使用 Linux Landlock + seccomp 沙箱运行命令。
     #[clap(visible_alias = "landlock")]
     Linux(LandlockCommand),
 
     /// Run a command under Windows restricted token (Windows only).
+    /// 使用 Windows 受限令牌沙箱运行命令。
     Windows(WindowsCommand),
 }
 
@@ -276,19 +306,19 @@ struct LoginCommand {
 
     #[arg(
         long = "with-api-key",
-        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
+        help = "Read the API key from stdin / 从 stdin 读取 API Key（例如：`printenv OPENAI_API_KEY | codex login --with-api-key`）"
     )]
     with_api_key: bool,
 
     #[arg(
         long = "api-key",
         value_name = "API_KEY",
-        help = "(deprecated) Previously accepted the API key directly; now exits with guidance to use --with-api-key",
+        help = "(deprecated) Previously accepted the API key directly; now exits with guidance to use --with-api-key / 已弃用：以前可直接传 API Key，现在会提示改用 --with-api-key",
         hide = true
     )]
     api_key: Option<String>,
 
-    #[arg(long = "device-auth")]
+    #[arg(long = "device-auth", help = "Use device code login / 使用设备码登录")]
     use_device_code: bool,
 
     /// EXPERIMENTAL: Use custom OAuth issuer base URL (advanced)
@@ -319,6 +349,7 @@ struct LogoutCommand {
 #[derive(Debug, Parser)]
 struct AppServerCommand {
     /// Omit to run the app server; specify a subcommand for tooling.
+    /// 不写子命令时启动 app server；写子命令时运行相关工具。
     #[command(subcommand)]
     subcommand: Option<AppServerSubcommand>,
 
@@ -361,26 +392,31 @@ enum AppServerSubcommand {
 
 #[derive(Debug, Args)]
 struct GenerateTsCommand {
-    /// Output directory where .ts files will be written
+    /// Output directory where .ts files will be written.
+    /// 生成的 `.ts` 文件输出目录。
     #[arg(short = 'o', long = "out", value_name = "DIR")]
     out_dir: PathBuf,
 
-    /// Optional path to the Prettier executable to format generated files
+    /// Optional path to the Prettier executable to format generated files.
+    /// 可选：指定 Prettier 路径来格式化生成文件。
     #[arg(short = 'p', long = "prettier", value_name = "PRETTIER_BIN")]
     prettier: Option<PathBuf>,
 
-    /// Include experimental methods and fields in the generated output
+    /// Include experimental methods and fields in the generated output.
+    /// 在输出中包含实验性方法和字段。
     #[arg(long = "experimental", default_value_t = false)]
     experimental: bool,
 }
 
 #[derive(Debug, Args)]
 struct GenerateJsonSchemaCommand {
-    /// Output directory where the schema bundle will be written
+    /// Output directory where the schema bundle will be written.
+    /// Schema 输出目录。
     #[arg(short = 'o', long = "out", value_name = "DIR")]
     out_dir: PathBuf,
 
-    /// Include experimental methods and fields in the generated output
+    /// Include experimental methods and fields in the generated output.
+    /// 在输出中包含实验性方法和字段。
     #[arg(long = "experimental", default_value_t = false)]
     experimental: bool,
 }
@@ -495,10 +531,12 @@ async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Res
 #[derive(Debug, Default, Parser, Clone)]
 struct FeatureToggles {
     /// Enable a feature (repeatable). Equivalent to `-c features.<name>=true`.
+    /// 启用某个功能开关，可重复传入。
     #[arg(long = "enable", value_name = "FEATURE", action = clap::ArgAction::Append, global = true)]
     enable: Vec<String>,
 
     /// Disable a feature (repeatable). Equivalent to `-c features.<name>=false`.
+    /// 关闭某个功能开关，可重复传入。
     #[arg(long = "disable", value_name = "FEATURE", action = clap::ArgAction::Append, global = true)]
     disable: Vec<String>,
 }
