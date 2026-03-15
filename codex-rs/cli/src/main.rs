@@ -337,6 +337,7 @@ struct LoginCommand {
 #[derive(Debug, clap::Subcommand)]
 enum LoginSubcommand {
     /// Show login status.
+    /// 查看当前登录状态。
     Status,
 }
 
